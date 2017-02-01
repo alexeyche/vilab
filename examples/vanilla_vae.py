@@ -1,10 +1,17 @@
 
-import vilab.log
+import logging
 
+from vilab.log import setup_log
 from vilab.api import *
-from vilab.calc import sample, deduce
 from vilab.util import *
-from functools import partial as Partial
+from vilab.calc import deduce, maximize
+from vilab.datasets import load_iris_dataset
+
+
+
+setup_log(logging.DEBUG)
+# setup_log(logging.INFO)
+
 
 x = Variable("x")
 z = Variable("z")
@@ -14,38 +21,40 @@ q = Model("q")
 
 mlp = Function("mlp", act=relu)
 
-mu = Function("mu") | mlp
-var = Function("var", act=softplus) | mlp
+mu = Function("mu", mlp)
+var = Function("var", mlp, act=softplus)
 
 
-p(z) == N0()
-
-p(x | z) == N(mu(z), var(z))
 q(z | x) == N(mu(x), var(x))
+p(x | z) == N(mu(z), var(z))
 
-structure = {
-	mlp: (100, 50),
-	z: 10,
-	x: 100
-}
-
-LL = - KL(q(z | x), p(z)) + log(p(x | z))
+LL = - KL(q(z | x), N0) + log(p(x | z))
 
 logging.info("==============================================")
 
-engine_inputs = {}
-
-o = deduce(q, LL, set([x, z]), {x: np.random.randn(100, 100)}, structure, 100, engine_inputs)
-
-# y_v = sample(p(x | z), structure=structure, batch_size=100)
+x_v, labs = load_iris_dataset()
+batch_size = x_v.shape[0]
 
 
+o = deduce(
+	LL,
+	feed_dict={x: x_v},
+	structure={
+		mlp: (10, 5),
+		z: 2,
+		x: 4
+	}
+)
 
-# y_v = sample(q(z | x), structure=structure, batch_size=100, feed_dict = {
-# 	x: np.random.randn(100, 100)
-# })
-
-
-# maximize(LL, epochs=100, feed_dict = {
-# 	x: np.random.randn(100, 100)	
-# })
+# out = maximize(
+# 	LL, 
+# 	epochs=200, 
+# 	feed_dict={x: x_v},
+# 	structure={
+# 		mlp: (10, 5),
+# 		z: 2,
+# 		x: 4
+# 	},
+# 	config = {"learning_rate": 1e-02},
+# 	monitor = [log(p(x | z))]
+# )

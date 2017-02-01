@@ -1,4 +1,5 @@
 
+
 from engine import Engine
 from api import *
 
@@ -6,106 +7,305 @@ import logging
 import copy
 import numbers
 import types
-
-def deduce(model, output, dependencies, feed_dict, structure, batch_size, engine_inputs):
-	visited = {}
-	calculated = {}
-
-	def deduce_recurrent(elem, requested_shape = None):
-		dst_elem = visited.get(elem)
-		if not dst_elem is None:
-			logging.debug("Element {} is already visited. Ignoring ...".format(elem))
-			return dst_elem
-
-		if isinstance(elem, Density):
-			logging.debug("Deducer({}): deducing for density".format(elem))
-			dst_elem = copy.copy(elem)
-			dst_elem.set_args(
-				[deduce_recurrent(a, requested_shape) for a in elem.get_args()]
-			)
-			assert not requested_shape is None, "Shape information is not provided to sample {}".format(dst_elem)
-
-			logging.info("Sampling {} with shape {}x{}".format(elem, batch_size, requested_shape))
-			dst_elem = Engine.sample(dst_elem, (batch_size, requested_shape))
-		elif isinstance(elem, Variable):
-			logging.debug("Deducer({}): deducing for variable".format(elem))
-			assert elem == output or elem in dependencies, "Can't find variable {} as dependent in model {}".format(elem, model)
-			
-			if elem in feed_dict:
-				logging.debug("Deducer({}): Found variable in inputs".format(elem))
-			
-				data = feed_dict[elem]
-				provided_input = Engine.provide_input(elem.get_name(), data.shape)
-				assert not provided_input in engine_inputs, "Visiting input for {} again".format(elem.get_name())
-				engine_inputs[provided_input] = data
-				dst_elem = provided_input
-			else:
-				rec = model.get_variable_record(elem)
-				logging.debug("Deducer({}): got variable record {}".format(elem, rec))
-				
-				elem_structure = structure.get(elem)
-				assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
-				
-				for d in rec.dependencies:
-					logging.debug("Deducer({}): deducing dependency {}".format(elem, d))
-					deduce_recurrent(d)
-				logging.debug("Deducer({}): deducing density {}".format(elem, rec.density))
-				
-				logging.info("Deducing variable {}".format(elem.get_name()))
-
-				dst_elem = deduce_recurrent(rec.density, elem_structure)
-
-		elif isinstance(elem, FunctionCallee):
-			logging.debug("Deducer({}): Calling function".format(elem))
-			deduced_args = [deduce_recurrent(arg) for arg in elem.get_args()]
-
-			if isinstance(elem.get_fun(), Function):
-				elem_structure = structure.get(elem.get_fun(), requested_shape)
-				assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
-								
-				logging.info("Calling function {} with structure {}, arguments: {}".format(
-					elem.get_name(), elem_structure, ",".join([str(a.get_name()) for a in elem.get_args()])
-				))
-				# requested_shape = elem.get_size()[0]
-				dst_elem = Engine.function(
-					*deduced_args, 
-					size = elem_structure, 
-					name = "{}/{}".format(model.get_name(), elem.get_name()),
-					act = deduce_recurrent(elem.get_act())
-				)
-			elif isinstance(elem, BasicFunction):
-				dst_elem = Engine.basic_function(elem, *deduced_args)
-			else:
-				raise Exception("Unknown type of function: {}".format(elem.get_fun()))
-		elif isinstance(elem, numbers.Integral):
-			dst_elem = elem
-		elif isinstance(elem, numbers.Real):
-			dst_elem = elem
-		elif isinstance(elem, Metrics):
-			dst_elem = Engine.calculate_metrics(elem)
-		else:
-			raise Exception("Deducer met unexpected type: {}".format(elem))
-		visited[elem] = dst_elem
-		return dst_elem
+from collections import namedtuple
+import numpy as np
 
 
-	return deduce_recurrent(output)
+class DensityView(object):
+    SAMPLE = "sample"
+    PROBABILITY = "probability"
+    DENSITY = "density"
 
 
-def sample(model_slice, feed_dict={}, structure={}, batch_size=1):
-	engine_inputs = {}
-	
-	returns = []
-	logging.debug("Sampling {}".format(model_slice))
-	
-	model, output, dependencies = model_slice.get_slice_info()
-	
-	result = deduce(model, output, dependencies, feed_dict, structure, batch_size, engine_inputs)
-	logging.debug("Collected {}".format(result))
-	returns.append(result)
-	return Engine.run(
-		returns, 
-		engine_inputs
-	)
+class Parser(object):
+    Ctx = namedtuple("Ctx", ["output", "requested_shape", "model", "dependencies", "density_view"])
+
+    @staticmethod
+    def get_ctx_with(ctx, output=None, requested_shape=None, model=None, dependencies=None, density_view=None):
+        return Parser.Ctx(
+            ctx.output if output is None else output,
+            ctx.requested_shape if requested_shape is None else requested_shape,
+            ctx.model if model is None else model,
+            ctx.dependencies if dependencies is None else dependencies,
+            ctx.density_view if density_view is None else density_view
+        )
+
+    def __init__(self, output, feed_dict, structure, batch_size, reuse=False):
+        self.output = output
+        self.feed_dict = feed_dict
+        self.structure = structure
+        self.batch_size = batch_size
+        self.reuse = reuse
+        self.default_ctx = Parser.Ctx(self.output, None, None, None, DensityView.SAMPLE)
+
+        self.variable_graph = {}
+        self.visited = {}
+        self.engine_inputs = {}
+
+        self.type_callbacks = {
+            Probability: self.probability,
+            Density: self.density,
+            Variable: self.variable,
+            FunctionResult: self.function_result,
+            Metrics: self.metrics,
+            numbers.Integral: self.identity,
+            numbers.Real: self.identity,
+        }
+        self.level = 0
 
 
+    def get_engine_inputs(self):
+        return self.engine_inputs
+
+    def get_visited_value(self, elem, ctx):
+        key = (elem, ctx.density_view)
+        if key in self.visited and not elem in self.feed_dict:
+            logging.debug("Element {} is already visited. Returning {} and ignoring ...".format(key, self.visited[key]))
+            return self.visited[key]
+        logging.debug("{} is not found, calculating".format(key))
+        return None
+
+    def update_visited_value(self, elem, ctx, value):
+        key = (elem, ctx.density_view)
+        self.visited[key] = value
+        logging.debug("Saving {} -> {}".format(key, value))
+
+    def deduce(self, elem, ctx = None):
+        if ctx is None:
+            ctx = self.default_ctx
+
+        visited_value = self.get_visited_value(elem, ctx)
+        if not visited_value is None:
+            return visited_value
+        
+        logging.debug("level: {}, elem: {}, ctx: {}".format(self.level, elem, ctx))
+        
+        cb_to_call = [ cb for tp, cb in self.type_callbacks.iteritems() if isinstance(elem, tp)]
+        assert len(cb_to_call) > 0, "Deducer got unexpected element: {}".format(elem)
+        assert len(cb_to_call) == 1, "Got too many callback matches for element: {}".format(elem)
+        self.level += 1
+        
+        result = cb_to_call[0](elem, ctx)
+        
+        self.update_visited_value(elem, ctx, result)
+        
+        self.level -= 1
+        logging.debug("level out: {}, result: {}".format(self.level, result))
+        return result
+
+
+    def probability(self, prob, ctx):
+        logging.debug("Deducer({}): deducing for probability".format(prob))
+        
+        model, output, dependencies = prob.get_components()
+        
+        return self.deduce(
+            output, 
+            Parser.Ctx(
+                output, 
+                ctx.requested_shape,
+                model,
+                dependencies,
+                ctx.density_view if ctx.density_view == DensityView.DENSITY else DensityView.PROBABILITY 
+            )
+        ) 
+
+
+    def density(self, elem, ctx):
+        logging.debug("Deducer({}): deducing for density".format(elem))
+        dst_elem = copy.copy(elem)
+        logging.debug("Deducer({}): Deducing arguments ...".format(elem))
+        dst_elem.set_args([
+            self.deduce(
+                arg, 
+                Parser.get_ctx_with(
+                    ctx, 
+                    density_view=DensityView.SAMPLE)
+                ) 
+            for arg in elem.get_args()
+        ])
+        logging.debug("Deducer({}): Done".format(elem))
+
+        if ctx.density_view == DensityView.SAMPLE:
+            assert not ctx.requested_shape is None, "Shape information is not provided to sample {}".format(dst_elem)
+            logging.info("Sampling {} with shape {}x{}".format(elem, self.batch_size, ctx.requested_shape))
+            return Engine.sample(dst_elem, (self.batch_size, ctx.requested_shape))
+        elif ctx.density_view == DensityView.PROBABILITY:
+            assert ctx.output in self.feed_dict, "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
+            
+            logging.info("Deducing likelihood for {} provided from inputs".format(ctx.output))
+            return Engine.likelihood(dst_elem, self.feed_dict[ctx.output])
+        elif ctx.density_view == DensityView.DENSITY:
+            logging.info("Return density parameters for {}".format(dst_elem))
+            return Engine.get_density(dst_elem)
+
+
+    def variable(self, elem, ctx):
+        logging.debug("Deducer({}): deducing for variable".format(elem))
+
+        trivial_deduce = not ctx.output is None and \
+                         elem == ctx.output and \
+                         elem in self.feed_dict and \
+                         not elem in self.variable_graph
+        
+        
+        if elem in self.variable_graph:   # means recursion
+            if not elem in self.feed_dict:
+                raise Exception("Expecting data on the top for {}".format(elem))
+            else:
+                logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
+                self.variable_graph = {}
+        else:
+            self.variable_graph[elem] = set()
+        
+        
+        if trivial_deduce:
+            logging.debug("Found output variable {} in inputs, considering this as trivial deduce, will proceed graph calculation".format(elem))
+        
+        
+        if elem in self.feed_dict and not trivial_deduce:
+            logging.debug("Deducer({}): Found variable in inputs".format(elem))
+        
+            data = self.feed_dict[elem]
+            provided_input = Engine.provide_input(elem.get_name(), data.shape)
+            assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
+            self.engine_inputs[provided_input] = data
+            return provided_input
+        else:
+            elem_model = elem.get_model()
+            elem_structure = self.structure.get(elem)
+            assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
+            
+            # for d in elem.get_dependencies():
+            #     self.variable_graph[elem].add(d)
+            #     logging.debug("Deducer({}): deducing dependency {}".format(elem, d))
+            #     r = self.deduce(
+            #         d, 
+            #         Parser.get_ctx_with(
+            #             ctx, 
+            #             model=elem_model, 
+            #             density_view=DensityView.SAMPLE if ctx.model != elem_model else ctx.density_view
+            #         )
+            #     )
+            #     logging.debug("Deducer({}): dependency result {}".format(elem, r))
+
+            logging.debug("Deducer({}): deducing density {}".format(elem, elem.get_density()))
+            
+            logging.info("Deducing variable {}".format(elem.get_name()))
+            return self.deduce(
+                elem.get_density(), 
+                Parser.get_ctx_with(
+                    ctx, 
+                    requested_shape=elem_structure, 
+                    model=elem_model, 
+                    density_view=DensityView.SAMPLE if ctx.model != elem_model else ctx.density_view
+                )
+            )
+
+
+    def function_result(self, elem, ctx):
+        logging.debug("Deducer({}): deducing for function result".format(elem))
+        deduced_args = [
+            self.deduce(arg, Parser.get_ctx_with(ctx, density_view=DensityView.SAMPLE))
+            for arg in elem.get_args()
+        ]
+
+        if isinstance(elem.get_fun(), Function):
+            elem_structure = self.structure.get(elem.get_fun(), ctx.requested_shape)
+            assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
+                            
+            logging.info("Calling function {}/{} with structure {}, arguments: {}".format(
+                ctx.model.get_name(), elem.get_name(), elem_structure, ",".join([str(a.get_name()) for a in elem.get_args()])
+            ))
+            # requested_shape = elem.get_size()[0]
+            return Engine.function(
+                *deduced_args, 
+                size = elem_structure, 
+                name = "{}/{}".format(ctx.model.get_name(), elem.get_name()),
+                act = elem.get_act(),
+                reuse = self.reuse
+            )
+        elif isinstance(elem.get_fun(), BasicFunction):
+            logging.info("Calling basic function {}, arguments: {}".format(
+                elem.get_name(), ",".join([str(a.get_name()) if hasattr(a, "get_name") else str(a) for a in elem.get_args()])
+            ))
+            return Engine.calc_basic_function(elem.get_fun(), *deduced_args)
+        else:
+            raise Exception("Unknown type of function: {}".format(elem.get_fun()))
+
+
+    def metrics(self, elem, ctx):
+        logging.debug("Deducer({}): deducing for metrics".format(elem))
+
+        deduced_args = [
+            self.deduce(arg, Parser.get_ctx_with(ctx, density_view=DensityView.DENSITY)) 
+            for arg in elem.get_args()
+        ]
+        
+        logging.info("Calculating metrics {} with arguments {}".format(
+            elem.get_name(),", ".join([str(a.get_name()) if hasattr(a, "get_name") else str(a) for a in elem.get_args()])
+        ))
+        
+        return Engine.calculate_metrics(elem, *deduced_args)
+
+
+    def identity(self, elem, ctx):
+        return elem
+
+
+def deduce_batch_size(feed_dict, batch_size):
+    for k, v in feed_dict.iteritems():
+        if not batch_size is None:
+            assert batch_size == v.shape[0], "Batch size is not the same through feed data"
+        else:
+            batch_size = v.shape[0]
+    
+    assert not batch_size is None, "Need to specify batch size, system couldn't infer this from input data"
+    return batch_size
+
+def deduce(elem, feed_dict={}, structure={}, batch_size=None):    
+    batch_size = deduce_batch_size(feed_dict, batch_size)
+
+    parser = Parser(elem, feed_dict, structure, batch_size)
+
+    result = parser.deduce(elem)
+
+    logging.debug("Collected {}".format(result))
+    return Engine.run(
+        result, 
+        parser.get_engine_inputs()
+    )
+
+
+
+def maximize(elem, epochs=100, feed_dict={}, structure={}, optimizer=Optimizer.ADAM, batch_size=None, config={}, monitor=[]):
+    batch_size = deduce_batch_size(feed_dict, batch_size)
+    results = []
+    
+    # elem = -elem # minimization
+    
+    parser = Parser(elem, feed_dict, structure, batch_size)
+    results.append(parser.deduce(elem))
+
+    monitor_names = []
+    for m in monitor:
+        results.append(parser.deduce(m))
+        monitor_names.append(m.get_name() if hasattr(m, "get_name") else str(m))
+
+    opt_output = Engine.optimization_output(results[0], optimizer, config)
+    results.append(opt_output)
+
+    logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
+    for e in xrange(epochs):
+        returns = Engine.run(
+            results, 
+            parser.get_engine_inputs()
+        )
+        result_v = returns[0]  
+        monitor_v = returns[1:-1]
+
+        logging.info("Epoch: {}, value: {}, ".format(e, np.mean(result_v)))
+        for n, v in zip(monitor_names, monitor_v):
+            logging.info("\t{}: {}".format(n, np.mean(v)))
+
+    return result_v

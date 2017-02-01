@@ -3,17 +3,17 @@
 import logging
 from collections import defaultdict
 from vilab.api.variable import Variable
-from vilab.api.density import Density, Unknown, Point
-from vilab.api.function import FunctionCallee
+from vilab.api.density import Density, Unknown, DiracDelta
+from vilab.api.function import FunctionResult
 
-class ModelSlice(object):
+class Probability(object):
     def __init__(self, model, output, dependencies):
         self._output = output
         self._dependencies = dependencies
         self._model = model
 
     def __str__(self):
-        return "ModelSlice {}({} | {})".format(
+        return "Probability {}({} | {})".format(
             self._model.get_name(), 
             self._output, 
             ",".join([str(d) for d in self._dependencies])
@@ -24,14 +24,16 @@ class ModelSlice(object):
 
     def __eq__(self, x):
         if isinstance(x, Density):
-            logging.info("Describing variable {} with density {} in the context of the model {}".format(self._output, x, self._model))
-            self._model.register_density(self._output, x)
+            logging.info("Describing variable {} with density {} in the context of {}".format(self._output, x, self._model))
+            self._output.set_density(x)
+            self._output.set_model(self._model)
             return True
-        elif isinstance(x, FunctionCallee):
-            logging.info("Describing variable {} with function {} in the context of the model {}".format(self._output, x, self._model))
-            self._model.register_density(self._output, Point(x))
+        elif isinstance(x, FunctionResult):
+            logging.info("Describing variable {} with function {} in the context of {}".format(self._output, x, self._model))
+            self._output.set_density(DiracDelta(x))
+            self._output.set_model(self._model)
             return True
-        elif isinstance(x, ModelSlice):
+        elif isinstance(x, Probability):
             return \
                 self._output == x._output and \
                 self._dependencies == self._dependencies and \
@@ -39,10 +41,11 @@ class ModelSlice(object):
         else:
             raise Exception("Comparing with the strange type: {}".format(x))
 
-    def get_slice_info(self):
+    def get_components(self):
         return self._model, self._output, self._dependencies
 
-
+    def get_output(self):
+        return self._output
 
 class VariableRecord(object):
     def __init__(self, *args, **kwargs):
@@ -65,7 +68,6 @@ class VariableRecord(object):
 class Model(object):
     def __init__(self, name):
         self._name = name
-        self._var_records = defaultdict(VariableRecord)
 
     def __str__(self):
         return "Model({})".format(self._name)
@@ -77,9 +79,12 @@ class Model(object):
         return self._name
 
     def __call__(self, *args):
+        v = args[0]
+        assert v.get_model() is None or v.get_model() == self, \
+            "Trying to describe variable {} that was already described by model {}".format(v, v.get_model())
+        assert isinstance(v, Variable), "Expecting variables as input to model"
+
         if len(args) > 1:
-            v = args[0]
-            assert isinstance(v, Variable), "Expecting variables as input to model"
             assert len(v._requested_dependencies) > 0, "Need to specify dependencies for 1 variable of model call"
             
             for a in args[1:]:
@@ -88,36 +93,27 @@ class Model(object):
 
             dependencies = v._requested_dependencies + list(args[1:])
             v._requested_dependencies = list()
-            self._var_records[v].dependencies = set(dependencies)
+            v._dependencies = set(dependencies) 
             
             logging.info("{} depends on {}".format(v, dependencies))
-            return ModelSlice(self, v, dependencies)
+            return Probability(self, v, dependencies)
         else:
-            v = args[0]
             dependencies = []
-            assert isinstance(v, Variable), "Expecting variables as input to model"
             if len(v._requested_dependencies) > 0:
                 dependencies = v._requested_dependencies
 
                 v._requested_dependencies = list()
-                self._var_records[v].dependencies = set(dependencies)
+                v._dependencies = set(dependencies)
                 logging.info("{} depends on {}".format(v, dependencies))
             else:
-                self._var_records[v].dependencies = set()
+                v._dependencies = set()
                 logging.info("{} is unconditioned".format(v))
-            return ModelSlice(self, v, dependencies)
+            return Probability(self, v, dependencies)
 
     def __hash__(self):
         return hash(self.get_name())
 
     def __eq__(self, other):
         return other.get_name() == self.get_name()
-
-    def register_density(self, var, pdf):
-        logging.info("{}: {} == {}".format(self, var, pdf))
-        self._var_records[var].density = pdf
-
-    def get_variable_record(self, var):
-        return self._var_records[var]
 
 

@@ -4,6 +4,7 @@ from api import *
 import tensorflow as tf
 import numpy as np
 from util import is_sequence
+ds = tf.contrib.distributions
 
 def xavier_init(fan_in, fan_out, const=0.5):
     """Xavier initialization of network weights.
@@ -26,21 +27,46 @@ def xavier_vec_init(fan_in, const=1.0):
 
 class Engine(object):
     CURRENT_SESSION = None
+    INITIALIZED = False
 
     @classmethod
-    def sample(cls, d, shape):
-        args = d.get_args()
-        if isinstance(d, N):
+    def sample(cls, density, shape):
+        args = density.get_args()
+        if isinstance(density, N):
             N0 = tf.random_normal(shape)
             mu = args[0]
-            var = tf.exp(0.5 * args[1])
+            stddev = tf.exp(0.5 * args[1])
             if isinstance(mu, tf.Tensor):
-                assert mu.get_shape() == var.get_shape(), "Shapes of deduced arguments for {} is not right".format(d)
-            return  mu + var * N0
-        elif isinstance(d, Point):
+                assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
+            return  tf.add(mu, stddev * N0, name="sample_{}".format(density.get_name()))
+        elif isinstance(density, DiracDelta):
             return args[0]
         else:
-            raise Exception("Failed to sample {}".format(d))
+            raise Exception("Failed to sample {}".format(density))
+
+
+    @classmethod
+    def get_density(cls, density):
+        args = density.get_args()
+        if isinstance(density, N):
+            mu = args[0]
+            stddev = tf.exp(0.5 * args[1])
+            if isinstance(mu, tf.Tensor):
+                assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
+            return ds.Normal(mu, stddev, name=density.get_name())
+        elif isinstance(density, DiracDelta):
+            raise Exception("DiracDelta distribution is not supported for calculating PDF related statistics")
+        else:
+            raise Exception("Failed to get density object: {}".format(density))
+
+
+    @classmethod
+    def likelihood(cls, density, data, logform=False):
+        density_obj = cls.get_density(density)
+        if logform:
+            return density_obj._log_prob(data)
+        else:
+            return density_obj._prob(data)
 
     @classmethod
     def get_session(cls):
@@ -58,9 +84,25 @@ class Engine(object):
 
     @classmethod
     def run(cls, *args, **kwargs):
-        sess = tf.Session()
-        sess.run(tf.global_variables_initializer())
+        sess = cls.get_session()
+        if not cls.INITIALIZED:
+            sess.run(tf.global_variables_initializer())
+            cls.INITIALIZED = True
+
         return sess.run(*args, **kwargs)
+
+
+    @classmethod
+    def get_optimizer(cls, optimizer, config):
+        if optimizer == Optimizer.ADAM:
+            return tf.train.AdamOptimizer(**config)
+        else:
+            raise Exception("Unsupported optimizer: {}".format(optimizer))
+
+    @classmethod
+    def optimization_output(cls, value, optimizer, config):
+        optimizer_tf = cls.get_optimizer(optimizer, config)
+        return optimizer_tf.minimize(-value)
 
     @classmethod
     def provide_input(cls, var_name, shape):
@@ -68,15 +110,37 @@ class Engine(object):
 
 
     @classmethod
-    def get_act(cls, act):
-        if act == linear:
+    def get_basic_function(cls, bf):
+        if bf == linear:
             return None
-        elif act == softplus:
+        elif bf == log:
+            return tf.log
+        elif bf == softplus:
             return tf.nn.softplus
-        elif act == relu:
+        elif bf == relu:
             return tf.nn.relu
-        raise Exception("Engine: Can't find activation function: {}".format(act))
+        elif bf == Arithmetic.ADD:
+            return tf.add
+        elif bf == Arithmetic.SUB:
+            return tf.sub
+        elif bf == Arithmetic.MUL:
+            return tf.mul
+        elif bf == Arithmetic.POW:
+            return tf.pow
+        elif bf == Arithmetic.POS:
+            return None
+        elif bf == Arithmetic.NEG:
+            return tf.neg
+        else:
+            raise Exception("Unsupported basic function: {}".format(bf))
 
+    @classmethod
+    def calc_basic_function(cls, bf, *args):
+        deduced_bf = cls.get_basic_function(bf)
+        if deduced_bf is None:
+            assert len(args) == 1, "Calling empty basic function {} with list of arguments: {}".format(bf, args)
+            return args[0]
+        return deduced_bf(*args)
 
     @staticmethod
     def function(*args, **kwargs):
@@ -111,7 +175,7 @@ class Engine(object):
 
         act = None
         if user_act:
-            act = Engine.get_act(user_act)
+            act = Engine.get_basic_function(user_act)
 
         with tf.variable_scope(name, reuse=reuse) as scope:
             inputs = args
@@ -149,9 +213,15 @@ class Engine(object):
 
 
     @classmethod
-    def calculate_metrics(cls, metrics):
+    def calculate_metrics(cls, metrics, *args):
         if isinstance(metrics, KL):
-            pass
+            assert len(args) == 2, "Need two arguments for KL metric"
+            assert isinstance(args[0], ds.Distribution), "Need argmunt to KL be distribution object, got {}".format(args[0])
+            assert isinstance(args[1], ds.Distribution), "Need argmunt to KL be distribution object, got {}".format(args[1])
+
+            ret = ds.kl(args[0], args[1])
+
+            return tf.reduce_mean(ret, ret.get_shape().ndims-1, keep_dims=True)
         else:
             raise Exception("Met unknown metrics: {}".format(metrics))
 

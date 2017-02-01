@@ -8,7 +8,7 @@ def get_name_if_possible(obj):
     return str(obj)
 
 class Density(object):
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, *args):
         self._name = name
         self._args = list(args)
 
@@ -33,9 +33,7 @@ class N(Density):
         super(N, self).__init__("Normal", mu, logvar)
         
 
-class N0(N):
-    def __init__(self):
-        super(N, self).__init__("Normal0", 0.0, 0.0)
+N0 = N(0.0, 0.0) 
 
 class Cat(Density):
     def __init__(self, pi):
@@ -46,15 +44,16 @@ class Unknown(Density):
     def __init__(self):
         super(Unknown, self).__init__("Unknown")
 
-class Point(Density):
+class DiracDelta(Density):
     def __init__(self, point):
-        super(Point, self).__init__("Point", point)
+        super(DiracDelta, self).__init__("DiracDelta", point)
 
 
 
 class Metrics(Arithmetic):
-    def __init__(self, name):
+    def __init__(self, name, *args):
         self._name = name
+        self._args = list(args)
 
     def get_name(self):
         return self._name
@@ -65,10 +64,12 @@ class Metrics(Arithmetic):
     def __repr__(self):
         return str(self)
 
+    def get_args(self):
+        return self._args
 
 
 class KL(Metrics):
     def __init__(self, p, q):
-        super(KL, self).__init__("KL")
+        super(KL, self).__init__("KL", p, q)
         self._p = p
         self._q = q

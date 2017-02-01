@@ -8,7 +8,7 @@ class BasicFunction(object):
         self._name = name
 
     def __call__(self, *args):
-        return FunctionCallee(self, *args)
+        return FunctionResult(self, *args)
 
     def __str__(self):
         return "BasicFunction({})".format(self.get_name())
@@ -36,30 +36,30 @@ class Arithmetic(object):
     NEG = BasicFunction("neg")
 
     def __add__(self, other):
-        return FunctionCallee(Arithmetic.ADD, self, other)
+        return FunctionResult(Arithmetic.ADD, self, other)
     def __sub__(self, other):
-        return FunctionCallee(Arithmetic.SUB, self, other)
+        return FunctionResult(Arithmetic.SUB, self, other)
     def __mul__(self, other):
-        return FunctionCallee(Arithmetic.MUL, self, other)
+        return FunctionResult(Arithmetic.MUL, self, other)
     def __div__(self, other):
-        return FunctionCallee(Arithmetic.DIV, self, other)
+        return FunctionResult(Arithmetic.DIV, self, other)
     def __pow__(self, other):
-        return FunctionCallee(Arithmetic.POW, self, other)
+        return FunctionResult(Arithmetic.POW, self, other)
     def __pos__(self):
-        return FunctionCallee(Arithmetic.POS, self)
+        return FunctionResult(Arithmetic.POS, self)
     def __neg__(self):
-        return FunctionCallee(Arithmetic.NEG, self)
+        return FunctionResult(Arithmetic.NEG, self)
 
 
 
 
-class FunctionCallee(Arithmetic):
+class FunctionResult(Arithmetic):
     def __init__(self, fun, *args):
         self._fun = fun
         self._args = args
 
     def __str__(self):
-        return "FunctionCallee({})".format(self._fun)
+        return "FunctionResult({})".format(self._fun)
 
     def __repr__(self):
         return str(self)
@@ -86,10 +86,10 @@ class FunctionCallee(Arithmetic):
 
 
 class Function(object):
-    def __init__(self, name, act=None):
-        self._act = act
+    def __init__(self, name, *parents, **kwargs):
+        self._act = kwargs.get("act")
         self._name = name
-        self._parent_funs = []
+        self._parent_funs = list(parents)
 
     def __str__(self):
         return "Function({})".format(self.get_name())
@@ -112,7 +112,7 @@ class Function(object):
         return self
 
     def __call__(self, *args):
-        return FunctionCallee(self, *[ FunctionCallee(pf, *args) for pf in self._parent_funs])
+        return FunctionResult(self, *[ FunctionResult(pf, *args) for pf in self._parent_funs])
 
     def __hash__(self):
         return hash((self._act, self._name, tuple(self._parent_funs)))

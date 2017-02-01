@@ -99,9 +99,9 @@ def add_coloring_to_emit_ansi(fn):
     #//hdlr = logging.StreamHandler()
 
 
-def setup_log():
+def setup_log(log_level):
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    root.setLevel(log_level)
 
     import platform
     if platform.system()=='Windows':
@@ -117,4 +117,3 @@ def setup_log():
     ch.setFormatter(formatter)
     root.addHandler(ch)
 
-setup_log()

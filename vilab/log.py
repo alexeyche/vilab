@@ -116,4 +116,3 @@ def setup_log(log_level):
     formatter = logging.Formatter('%(asctime)s-%(levelname)s: %(message)s')
     ch.setFormatter(formatter)
     root.addHandler(ch)
-

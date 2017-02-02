@@ -11,10 +11,10 @@ def make_dir(*args):
 class Env(object):
 	ROOT_PATH = pj(os.environ["HOME"], "vilab")
 
-	def __init__(self):
-		self._res_dir = make_dir(self.ROOT_PATH, "result")
-		self._dataset_dir = make_dir(self.ROOT_PATH, "dataset")
-		self._run_dir = make_dir(self.ROOT_PATH, "run")
+	def __init__(self, root = ROOT_PATH):
+		self._res_dir = make_dir(root, "result")
+		self._dataset_dir = make_dir(root, "dataset")
+		self._run_dir = make_dir(root, "run")
 
 
 	def result(self, *args):

@@ -2,6 +2,7 @@
 
 from engine import Engine
 from api import *
+from util import is_sequence
 
 import logging
 import copy
@@ -31,14 +32,13 @@ class Parser(object):
         )
 
     def __init__(self, output, feed_dict, structure, batch_size, reuse=False):
-        self.output = output
         self.feed_dict = feed_dict
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
-        self.default_ctx = Parser.Ctx(self.output, None, None, None, DensityView.SAMPLE)
+        self.default_ctx = Parser.Ctx(output, None, None, None, DensityView.SAMPLE)
 
-        self.variable_graph = {}
+        self.variable_set = set()
         self.visited = {}
         self.engine_inputs = {}
 
@@ -57,6 +57,9 @@ class Parser(object):
     def get_engine_inputs(self):
         return self.engine_inputs
 
+    def get_ctx(self):
+        return self.default_ctx
+
     def get_visited_value(self, elem, ctx):
         key = (elem, ctx.density_view)
         if key in self.visited and not elem in self.feed_dict:
@@ -67,8 +70,9 @@ class Parser(object):
 
     def update_visited_value(self, elem, ctx, value):
         key = (elem, ctx.density_view)
-        self.visited[key] = value
-        logging.debug("Saving {} -> {}".format(key, value))
+        if not key in self.visited:
+            self.visited[key] = value
+            logging.debug("Saving {} -> {}".format(key, value))
 
     def deduce(self, elem, ctx = None):
         if ctx is None:
@@ -146,17 +150,16 @@ class Parser(object):
         trivial_deduce = not ctx.output is None and \
                          elem == ctx.output and \
                          elem in self.feed_dict and \
-                         not elem in self.variable_graph
+                         not elem in self.variable_set
         
-        
-        if elem in self.variable_graph:   # means recursion
+        recursion = elem in self.variable_set
+        if recursion:
             if not elem in self.feed_dict:
                 raise Exception("Expecting data on the top for {}".format(elem))
             else:
                 logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
-                self.variable_graph = {}
         else:
-            self.variable_graph[elem] = set()
+            self.variable_set.add(elem)
         
         
         if trivial_deduce:
@@ -170,6 +173,8 @@ class Parser(object):
             provided_input = Engine.provide_input(elem.get_name(), data.shape)
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
             self.engine_inputs[provided_input] = data
+            if not recursion:
+                self.variable_set.remove(elem)
             return provided_input
         else:
             elem_model = elem.get_model()
@@ -177,7 +182,7 @@ class Parser(object):
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
             
             # for d in elem.get_dependencies():
-            #     self.variable_graph[elem].add(d)
+            #     self.variable_set[elem].add(d)
             #     logging.debug("Deducer({}): deducing dependency {}".format(elem, d))
             #     r = self.deduce(
             #         d, 
@@ -192,7 +197,7 @@ class Parser(object):
             logging.debug("Deducer({}): deducing density {}".format(elem, elem.get_density()))
             
             logging.info("Deducing variable {}".format(elem.get_name()))
-            return self.deduce(
+            result = self.deduce(
                 elem.get_density(), 
                 Parser.get_ctx_with(
                     ctx, 
@@ -201,6 +206,9 @@ class Parser(object):
                     density_view=DensityView.SAMPLE if ctx.model != elem_model else ctx.density_view
                 )
             )
+            if not recursion:
+                self.variable_set.remove(elem)
+            return result
 
 
     def function_result(self, elem, ctx):
@@ -265,20 +273,41 @@ def deduce_batch_size(feed_dict, batch_size):
 
 def deduce(elem, feed_dict={}, structure={}, batch_size=None):    
     batch_size = deduce_batch_size(feed_dict, batch_size)
+    results = []
+    top_elem = elem
+    if is_sequence(elem):
+        top_elem = elem[0]
+    
+    parser = Parser(top_elem, feed_dict, structure, batch_size)
+    if is_sequence(elem):
+        for subelem in elem:
+            results.append(parser.deduce(subelem))
+    else:
+        results.append(parser.deduce(elem))
 
-    parser = Parser(elem, feed_dict, structure, batch_size)
-
-    result = parser.deduce(elem)
-
-    logging.debug("Collected {}".format(result))
-    return Engine.run(
-        result, 
+    logging.debug("Collected {}".format(results))
+    outputs = Engine.run(
+        results, 
         parser.get_engine_inputs()
     )
+    if is_sequence(elem):
+        return outputs[0]
+    return outputs
 
 
 
-def maximize(elem, epochs=100, feed_dict={}, structure={}, optimizer=Optimizer.ADAM, batch_size=None, config={}, monitor=[]):
+def maximize(
+    elem, 
+    epochs=100, 
+    feed_dict={}, 
+    structure={}, 
+    optimizer=Optimizer.ADAM, 
+    batch_size=None, 
+    config={}, 
+    monitor=[], 
+    monitor_callback=None,
+    monitor_freq=1
+):
     batch_size = deduce_batch_size(feed_dict, batch_size)
     results = []
     
@@ -289,7 +318,7 @@ def maximize(elem, epochs=100, feed_dict={}, structure={}, optimizer=Optimizer.A
 
     monitor_names = []
     for m in monitor:
-        results.append(parser.deduce(m))
+        results.append(parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m)))
         monitor_names.append(m.get_name() if hasattr(m, "get_name") else str(m))
 
     opt_output = Engine.optimization_output(results[0], optimizer, config)
@@ -303,9 +332,11 @@ def maximize(elem, epochs=100, feed_dict={}, structure={}, optimizer=Optimizer.A
         )
         result_v = returns[0]  
         monitor_v = returns[1:-1]
-
-        logging.info("Epoch: {}, value: {}, ".format(e, np.mean(result_v)))
-        for n, v in zip(monitor_names, monitor_v):
-            logging.info("\t{}: {}".format(n, np.mean(v)))
-
-    return result_v
+        if e % monitor_freq == 0:
+            logging.info("Epoch: {}, value: {}, ".format(e, np.mean(result_v)))
+            for n, v in zip(monitor_names, monitor_v):
+                logging.info("\t{}: {}".format(n, np.mean(v)))
+            
+            if not monitor_callback is None:
+                monitor_callback(e, *monitor_v)
+    return result_v, returns[1:-1]

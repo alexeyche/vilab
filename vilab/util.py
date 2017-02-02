@@ -5,7 +5,7 @@ import numpy as np
 import math
 import collections
 
-def sm(matrix, file=None):
+def shm(matrix, file=None):
     plt.imshow(np.squeeze(matrix).T)
     plt.colorbar()
 
@@ -25,7 +25,7 @@ def smooth_matrix(m, sigma=0.01, filter_size=50):
         res[:, dim_idx] = smooth(m[:, dim_idx], sigma, filter_size)
     return res
 
-def sl(*vector, **kwargs):
+def shl(*vector, **kwargs):
     labels = kwargs.get("labels", [])
     for id, v in enumerate(vector):
         if len(labels) > 0:
@@ -41,6 +41,31 @@ def sl(*vector, **kwargs):
         plt.clf()
     else:
         plt.show()
+
+def shs(*args, **kwargs):
+    labels = kwargs.get("labels", [])
+    make_pca = kwargs.get("make_pca", True)
+
+    for a in args:
+        if make_pca and a.shape[1] > 2:
+            import sklearn.decomposition as dec
+            pca = dec.PCA(2)
+            a = pca.fit(a).transform(a)
+        
+        if len(labels) > 0:
+            plt.scatter(a[:,0], a[:,1], c=labels)
+        else:
+            plt.scatter(a[:,0], a[:,1])
+    
+    if len(labels) > 0:
+        plt.legend()
+
+    if kwargs.get("file"):
+        plt.savefig(kwargs["file"])
+        plt.clf()
+    else:
+        plt.show()
+
 
 def moving_average(a, n=3) :
     ret = np.cumsum(a, dtype=float)

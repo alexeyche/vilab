@@ -73,3 +73,9 @@ class KL(Metrics):
         super(KL, self).__init__("KL", p, q)
         self._p = p
         self._q = q
+
+class SquaredLoss(Metrics):
+    def __init__(self, p, q):
+        super(SquaredLoss, self).__init__("SquaredLoss", p, q)
+        self._p = p
+        self._q = q

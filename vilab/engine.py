@@ -6,6 +6,14 @@ import numpy as np
 from util import is_sequence
 ds = tf.contrib.distributions
 
+class DiracDeltaDistribution(ds.Distribution):
+    def __init__(self, point, name="DiracDelta"):
+        self.point = point
+
+    def _point(self):
+        return self.point
+
+
 def xavier_init(fan_in, fan_out, const=0.5):
     """Xavier initialization of network weights.
 
@@ -38,7 +46,7 @@ class Engine(object):
             stddev = tf.exp(0.5 * args[1])
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
-            return  tf.add(mu, stddev * N0, name="sample_{}".format(density.get_name()))
+            return tf.add(mu, stddev * N0, name="sample_{}".format(density.get_name()))
         elif isinstance(density, DiracDelta):
             return args[0]
         else:
@@ -55,7 +63,7 @@ class Engine(object):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
             return ds.Normal(mu, stddev, name=density.get_name())
         elif isinstance(density, DiracDelta):
-            raise Exception("DiracDelta distribution is not supported for calculating PDF related statistics")
+            return DiracDeltaDistribution(args[0])
         else:
             raise Exception("Failed to get density object: {}".format(density))
 
@@ -93,20 +101,20 @@ class Engine(object):
 
 
     @classmethod
-    def get_optimizer(cls, optimizer, config):
+    def get_optimizer(cls, optimizer, learning_rate):
         if optimizer == Optimizer.ADAM:
-            return tf.train.AdamOptimizer(**config)
+            return tf.train.AdamOptimizer(learning_rate=learning_rate)
         else:
             raise Exception("Unsupported optimizer: {}".format(optimizer))
 
     @classmethod
-    def optimization_output(cls, value, optimizer, config):
-        optimizer_tf = cls.get_optimizer(optimizer, config)
+    def optimization_output(cls, value, optimizer, learning_rate):
+        optimizer_tf = cls.get_optimizer(optimizer, learning_rate)
         return optimizer_tf.minimize(-value)
 
     @classmethod
     def provide_input(cls, var_name, shape):
-        return tf.placeholder(tf.float32, shape=shape, name=var_name)
+        return tf.placeholder(tf.float32, shape=shape, name="input_{}".format(var_name))
 
 
     @classmethod
@@ -119,6 +127,8 @@ class Engine(object):
             return tf.nn.softplus
         elif bf == relu:
             return tf.nn.relu
+        elif bf == elu:
+            return tf.nn.elu
         elif bf == Arithmetic.ADD:
             return tf.add
         elif bf == Arithmetic.SUB:
@@ -147,7 +157,7 @@ class Engine(object):
         assert 'size' in kwargs, "Need size information"
         assert 'name' in kwargs, "Need name for output"
 
-        assert len(args) > 0, "Empty args"
+        assert len(args) > 0, "Empty arguments in function {}".format(kwargs["name"])
 
         size = kwargs["size"]
         name = kwargs["name"]
@@ -216,12 +226,30 @@ class Engine(object):
     def calculate_metrics(cls, metrics, *args):
         if isinstance(metrics, KL):
             assert len(args) == 2, "Need two arguments for KL metric"
-            assert isinstance(args[0], ds.Distribution), "Need argmunt to KL be distribution object, got {}".format(args[0])
-            assert isinstance(args[1], ds.Distribution), "Need argmunt to KL be distribution object, got {}".format(args[1])
+            assert isinstance(args[0], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[0])
+            assert isinstance(args[1], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[1])
 
             ret = ds.kl(args[0], args[1])
 
             return tf.reduce_mean(ret, ret.get_shape().ndims-1, keep_dims=True)
+        elif isinstance(metrics, SquaredLoss):
+            assert len(args) == 2, "Need two arguments for SquaredLoss metric"
+            
+            assert isinstance(args[0], DiracDeltaDistribution) or isinstance(args[0], tf.Tensor), \
+                "Need argument to SquaredLoss be dirac delta distribution object, got {}".format(args[0])
+            assert isinstance(args[1], DiracDeltaDistribution) or isinstance(args[1], tf.Tensor), \
+                "Need argument to SquaredLoss be dirac delta distribution object, got {}".format(args[1])
+
+
+            left, right = args[0], args[1]
+            if isinstance(left, DiracDeltaDistribution):
+                left = left._point()
+            if isinstance(right, DiracDeltaDistribution):
+                right = right._point()
+            
+            ret = tf.square(left - right)
+
+            return tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)/2.0
         else:
             raise Exception("Met unknown metrics: {}".format(metrics))
 

@@ -12,56 +12,61 @@ from vilab.env import Env
 # setup_log(logging.DEBUG)
 setup_log(logging.INFO)
 
-# root = logging.getLogger()
-    
 x = Variable("x")
 z = Variable("z")
 
 p = Model("p")
 q = Model("q")
 
-mlp = Function("mlp", act=relu)
+mlp = Function("mlp", act=elu)
 
 mu = Function("mu", mlp)
 var = Function("var", mlp, act=softplus)
 
 
 q(z | x) == N(mu(x), var(x))
-p(x | z) == N(mu(z), var(z))
+p(x | z) == mu(z)
 
-LL = - KL(q(z | x), N0) + log(p(x | z))
-
-logging.info("==============================================")
+LL =  - KL(q(z | x), N0) - SquaredLoss(p(x | z), x)
 
 x_v, labs = load_iris_dataset()
+
+x_train, x_valid, x_test = load_mnist_binarized()
 
 env = Env()
 env.clear_pics(env.run())
 
 
-def plot_interm(epoch, kl, log_px, z_v, x_res_v):
-    if z_v.shape[1] > 2:
-        import sklearn.decomposition as dec
-        pca = dec.PCA(2)
-        z_v = pca.fit(z_v).transform(z_v)
-
-    plt.scatter(z_v[:,0], z_v[:,1], c=labs)
-    plt.savefig(env.run("z_scatter{}.png".format(epoch)))
-    plt.clf()
-    logging.info("\tSquared loss: {}".format(np.mean(np.square(x_res_v - x_v))))
-
-
 out, mon_out = maximize(
 	LL, 
-	epochs=2000, 
+	epochs=1000,
+	learning_rate=1e-02,
 	feed_dict={x: x_v},
 	structure={
-		mlp: (10, 5),
-		z: 2,
-		x: 4
+		mlp: (10,),
+		z: 2
 	},
-	config={"learning_rate": 1e-03},
-	monitor=[KL(q(z | x), N0), log(p(x | z)), z, x],
-	monitor_callback=plot_interm,
-	monitor_freq=100
+	monitor=[
+		z, 
+		KL(q(z | x), N0), 
+		SquaredLoss(p(x | z), x),
+		mu(x), 
+		var(x)
+	],
+	monitor_callback=lambda *args: shs(args[1], labels=labs, file=env.run("z_scatter_{}.png".format(args[0]))),
+	monitor_freq=10
 )
+
+shl(
+	mon_out[:,1],
+	mon_out[:,2],
+	mon_out[:,3],
+	np.exp(0.5 * mon_out[:,4]),
+	labels = ["KL", "log_p_x", "mu", "var"]
+)
+
+x_sample = deduce(x, feed_dict={z: np.random.randn(99, 2)}, structure={x: x_v.shape[1]}, reuse=True)
+
+shs(x_v, labels=labs)
+shs(x_sample)
+

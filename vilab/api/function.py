@@ -20,12 +20,6 @@ class BasicFunction(object):
         return self._name
 
 
-relu = BasicFunction("relu")
-linear = BasicFunction("linear")
-softplus = BasicFunction("softplus")
-log = BasicFunction("log")
-
-
 class Arithmetic(object):
     ADD = BasicFunction("add")
     SUB = BasicFunction("sub")
@@ -112,7 +106,10 @@ class Function(object):
         return self
 
     def __call__(self, *args):
-        return FunctionResult(self, *[ FunctionResult(pf, *args) for pf in self._parent_funs])
+        if len(self._parent_funs) > 0:
+            return FunctionResult(self, *[ FunctionResult(pf, *args) for pf in self._parent_funs])
+        else:
+            return FunctionResult(self, *args)
 
     def __hash__(self):
         return hash((self._act, self._name, tuple(self._parent_funs)))
@@ -122,6 +119,15 @@ class Function(object):
             self._act == x._act and \
             self._name == x._name and \
             self._parent_funs == x._parent_funs
+
+
+
+relu = BasicFunction("relu")
+linear = BasicFunction("linear")
+softplus = BasicFunction("softplus")
+log = BasicFunction("log")
+elu = BasicFunction("elu")
+
 
 
 

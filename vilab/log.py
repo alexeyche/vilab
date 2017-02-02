@@ -99,7 +99,7 @@ def add_coloring_to_emit_ansi(fn):
     #//hdlr = logging.StreamHandler()
 
 
-def setup_log(log_level):
+def setup_log(log_level, ident_level=0):
     root = logging.getLogger()
     root.setLevel(log_level)
 
@@ -113,6 +113,7 @@ def setup_log(log_level):
 
 
     ch = logging.StreamHandler(sys.stderr)
-    formatter = logging.Formatter('%(asctime)s-%(levelname)s: %(message)s')
+    formatter = logging.Formatter("%(asctime)s %(levelname)5s: " + ident_level * "  " + "%(message)s")
     ch.setFormatter(formatter)
+    [ root.removeHandler(h) for h in root.handlers ]
     root.addHandler(ch)

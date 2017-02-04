@@ -47,6 +47,10 @@ class Engine(object):
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
             return tf.add(mu, stddev * N0, name="sample_{}".format(density.get_name()))
+        elif isinstance(density, B):
+            U0 = tf.random_uniform(shape)
+            sample = tf.less(U0, tf.nn.sigmoid(args[0]), name="sample_{}".format(density.get_name()))
+            return tf.cast(sample, args[0].dtype)
         elif isinstance(density, DiracDelta):
             return args[0]
         else:
@@ -62,6 +66,9 @@ class Engine(object):
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
             return ds.Normal(mu, stddev, name=density.get_name())
+        elif isinstance(density, B):
+            logits = args[0]
+            return ds.Bernoulli(logits=logits)            
         elif isinstance(density, DiracDelta):
             return DiracDeltaDistribution(args[0])
         else:

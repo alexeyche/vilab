@@ -143,8 +143,15 @@ class Parser(object):
             assert ctx.output in self.feed_dict, "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
             assert not isinstance(dst_elem, DiracDelta), "Can't calculate likelihood value for DiracDelta distribution"
 
+            data = self.feed_dict[ctx.output]
+            provided_input = Engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
+
+            assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
+            self.engine_inputs[provided_input] = ctx.output
+
             logging.info("Deducing likelihood for {} provided from inputs".format(ctx.output))
-            return Engine.likelihood(dst_elem, self.feed_dict[ctx.output])
+
+            return Engine.likelihood(dst_elem, provided_input)
         elif ctx.density_view == DensityView.DENSITY:
             logging.info("Return density parameters for {}".format(dst_elem))
             return Engine.get_density(dst_elem)
@@ -177,9 +184,9 @@ class Parser(object):
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
         
             data = self.feed_dict[elem]
-            provided_input = Engine.provide_input(elem.get_name(), data.shape)
+            provided_input = Engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
-            self.engine_inputs[provided_input] = data
+            self.engine_inputs[provided_input] = elem
             if not recursion:
                 self.variable_set.remove(elem)
             return provided_input
@@ -260,13 +267,13 @@ class Parser(object):
         return elem
 
 
-def deduce_batch_size(feed_dict, batch_size):
+def get_data_size(feed_dict):
+    batch_size = None
     for k, v in feed_dict.iteritems():
         if not batch_size is None:
             assert batch_size == v.shape[0], "Batch size is not the same through feed data"
         else:
-            batch_size = v.shape[0]
-    
+            batch_size = v.shape[0]    
     assert not batch_size is None, "Need to specify batch size, system couldn't infer this from input data"
     return batch_size
 
@@ -276,9 +283,58 @@ def deduce_shapes(feed_dict, structure):
         if not k in structure:
              structure[k] = v.shape[-1]
 
+
+def get_data_slice(element_id, batch_size, feed_dict):
+    data_slice = {}
+    for k, v in feed_dict.iteritems():
+        v_shape = v.shape
+        next_element_id = min(element_id + batch_size, v_shape[0])
+        data_v = v[element_id:next_element_id]
+        data_len = next_element_id - element_id
+        if batch_size > data_len:
+            data_v = np.concatenate([data_v, np.zeros((batch_size - data_len,) + v_shape[1:])])
+        data_slice[k] = data_v
+    
+    return data_slice, element_id + batch_size
+
+
+def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
+    data_size = get_data_size(feed_dict)
+
+    element_id = 0
+    outputs = None
+    while element_id < data_size:
+        data_for_input = {}
+        data_slice, element_id = get_data_slice(element_id, batch_size, feed_dict)
+        
+        for k, v in engine_inputs.iteritems():
+            data = data_slice.get(v)
+            assert not data is None, "Failed to find {} in feed_dict".format(v)
+            data_for_input[k] = data
+
+        batch_outputs = Engine.run(
+            leaves_to_run, 
+            data_for_input
+        )
+        if outputs is None:
+            outputs = batch_outputs
+        else:
+            for out_id, (out, bout) in enumerate(zip(outputs, batch_outputs)):
+                if not bout is None:
+                    outputs[out_id] = np.concatenate([out, bout])
+
+        _ = gc.collect()
+    
+    return outputs    
+
 def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False):    
-    batch_size = deduce_batch_size(feed_dict, batch_size)
+    data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
+    
+    assert not batch_size is None or data_size < 10000 , "Got too big data size, need to point proper batch_size in arguments"
+
+    if batch_size is None:
+        batch_size = data_size
 
     results = []
     top_elem = elem
@@ -293,16 +349,17 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False):
         results.append(parser.deduce(elem))
 
     logging.debug("Collected {}".format(results))
-    
-    outputs = Engine.run(
-        results, 
-        parser.get_engine_inputs()
-    )
-    
+    outputs = _run(results, feed_dict, batch_size, parser.get_engine_inputs())
     if not is_sequence(elem):
         return outputs[0]
     return outputs
 
+class Monitor(object):
+    def __init__(self, elems, freq=1, feed_dict=None, callback=None):
+        self.elems = elems
+        self.freq= freq
+        self.feed_dict = feed_dict
+        self.callback = callback
 
 
 def maximize(
@@ -313,48 +370,64 @@ def maximize(
     structure={}, 
     optimizer=Optimizer.ADAM, 
     batch_size=None, 
-    monitor=[], 
-    monitor_callback=None,
-    monitor_freq=1
+    monitor=Monitor([])
 ):
-    batch_size = deduce_batch_size(feed_dict, batch_size)
+    data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
+
+    assert not batch_size is None or data_size < 10000 , "Got too big data size, need to point proper batch_size in arguments"
+
+    if batch_size is None:
+        batch_size = data_size
     
-    results = []
+    leaves = []
     
     parser = Parser(elem, feed_dict, structure, batch_size)
-    results.append(parser.deduce(elem))
+    leaves.append(parser.deduce(elem))
+    
+    opt_output = Engine.optimization_output(leaves[0], optimizer, learning_rate)
 
     monitor_names = []
-    for m in monitor:
-        results.append(parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m)))
+    for m in monitor.elems:
+        leaves.append(parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m)))
         monitor_names.append(m.get_name() if hasattr(m, "get_name") else str(m))
 
-    opt_output = Engine.optimization_output(results[0], optimizer, learning_rate)
-    results.append(opt_output)
 
     monitoring_values = []
 
     logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
     for e in xrange(epochs):
-        returns = Engine.run(
-            results,
-            parser.get_engine_inputs()
-        )
-        result_v = returns[0]  
-        monitor_v = returns[1:-1]
+        returns = _run(leaves + [opt_output], feed_dict, batch_size, parser.get_engine_inputs())
         
-        if e % monitor_freq == 0:
-            logging.info("Epoch: {}, value: {}, ".format(e, np.mean(result_v)))
-            if not monitor_callback is None:
-                monitor_callback(e, *monitor_v)
+        if e % monitor.freq == 0:
+            monitor_returns = _run(
+                leaves, 
+                monitor.feed_dict if not monitor.feed_dict is None else feed_dict,
+                batch_size, 
+                parser.get_engine_inputs()
+            )
+
+            monitor_v = monitor_returns[1:]
+            
+            mon_str = ""
+            if not monitor.feed_dict is None:
+                mon_str = ", monitor value: {}".format(np.mean(monitor_returns[0]))
+
+            logging.info("Epoch: {}, value: {}{}".format(e, np.mean(returns[0]), mon_str))
+            if not monitor.callback is None:
+                monitor.callback(e, *monitor_v)
             monitor_v = [np.mean(v) for v in monitor_v]
-            for n, v in zip(monitor_names, monitor_v):
-                logging.info("\t{}: {}".format(n, np.mean(v)))
+            for n, mv, v in zip(monitor_names, monitor_v, returns[1:-1]):
+                if not monitor.feed_dict is None:
+                    mon_str = "{}, monitor value: {}".format(np.mean(v), np.mean(mv))
+                else:
+                    mon_str = "{}".format(np.mean(mv))
+                
+                logging.info("\t{}: {}".format(n, mon_str))
             
             monitoring_values.append(monitor_v)
 
             
         _ = gc.collect()
 
-    return result_v, np.asarray(monitoring_values)
+    return returns[0], np.asarray(monitoring_values)

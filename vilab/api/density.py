@@ -33,6 +33,11 @@ class N(Density):
         super(N, self).__init__("Normal", mu, logvar)
         
 
+class B(Density):
+    def __init__(self, logits):
+        super(B, self).__init__("Binomial", logits)
+
+
 N0 = N(0.0, 0.0) 
 
 class Cat(Density):

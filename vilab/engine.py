@@ -146,6 +146,8 @@ class Engine(object):
             return tf.nn.relu
         elif bf == elu:
             return tf.nn.elu
+        elif bf == tanh:
+            return tf.nn.tanh
         elif bf == Arithmetic.ADD:
             return tf.add
         elif bf == Arithmetic.SUB:

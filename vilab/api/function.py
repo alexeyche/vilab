@@ -129,6 +129,7 @@ linear = BasicFunction("linear")
 softplus = BasicFunction("softplus")
 log = BasicFunction("log")
 elu = BasicFunction("elu")
+tanh = BasicFunction("tanh")
 
 
 

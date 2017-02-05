@@ -450,7 +450,7 @@ def maximize(
                 else:
                     mon_str = "{}".format(np.mean(mv))
                 
-                logging.info("\t{}: {}".format(n, mon_str))
+                logging.info("    {}: {}".format(n, mon_str))
             
             monitoring_values.append(monitor_v)
 

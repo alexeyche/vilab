@@ -36,6 +36,9 @@ def xavier_vec_init(fan_in, const=1.0):
 class Engine(object):
     CURRENT_SESSION = None
     INITIALIZED = False
+    
+    _debug_input_data = {}
+    _debug_outputs = []
 
     @classmethod
     def sample(cls, density, shape):
@@ -68,7 +71,7 @@ class Engine(object):
             return ds.Normal(mu, stddev, name=density.get_name())
         elif isinstance(density, B):
             logits = args[0]
-            return ds.Bernoulli(logits=logits)            
+            return ds.Bernoulli(logits=logits)
         elif isinstance(density, DiracDelta):
             return DiracDeltaDistribution(args[0])
         else:
@@ -78,11 +81,16 @@ class Engine(object):
     @classmethod
     def likelihood(cls, density, data, logform=False):
         density_obj = cls.get_density(density)
+        
+        ret = density_obj._log_prob(data)
+        
+        ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
+        
         if logform:
-            return density_obj._log_prob(data)
+            return ret_sum
         else:
-            return density_obj._prob(data)
-
+            return tf.exp(ret_sum)
+        
     @classmethod
     def get_session(cls):
         if cls.CURRENT_SESSION is None:
@@ -117,11 +125,13 @@ class Engine(object):
     @classmethod
     def optimization_output(cls, value, optimizer, learning_rate):
         optimizer_tf = cls.get_optimizer(optimizer, learning_rate)
-        return optimizer_tf.minimize(-value)
+        return optimizer_tf.minimize(-tf.reduce_mean(value))
 
     @classmethod
     def provide_input(cls, var_name, shape):
-        return tf.placeholder(tf.float32, shape=shape, name="input_{}".format(var_name))
+        inp = tf.placeholder(tf.float32, shape=shape, name="input_{}".format(var_name))
+        cls._debug_input_data[var_name] = inp
+        return inp
 
 
     @classmethod
@@ -237,8 +247,8 @@ class Engine(object):
             assert isinstance(args[1], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[1])
 
             ret = ds.kl(args[0], args[1])
-
-            return tf.reduce_mean(ret, ret.get_shape().ndims-1, keep_dims=True)
+            
+            return tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
         elif isinstance(metrics, SquaredLoss):
             assert len(args) == 2, "Need two arguments for SquaredLoss metric"
             

@@ -74,10 +74,11 @@ class FunctionResult(Arithmetic):
         return hash((self._fun, self._args))
 
     def __eq__(self, x):
-        return \
-            self._fun == x._fun and \
-            self._args == x._args
-
+        if isinstance(x, FunctionResult):
+            return \
+                self._fun == x._fun and \
+                self._args == x._args
+        return False
 
 class Function(object):
     def __init__(self, name, *parents, **kwargs):
@@ -115,11 +116,12 @@ class Function(object):
         return hash((self._act, self._name, tuple(self._parent_funs)))
 
     def __eq__(self, x):
-        return \
-            self._act == x._act and \
-            self._name == x._name and \
-            self._parent_funs == x._parent_funs
-
+        if isinstance(x, Function):
+            return \
+                self._act == x._act and \
+                self._name == x._name and \
+                self._parent_funs == x._parent_funs
+        return False
 
 
 relu = BasicFunction("relu")

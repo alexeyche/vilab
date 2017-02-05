@@ -53,15 +53,16 @@ class Variable(object):
         return str(self)
 
     def __hash__(self):
-        return hash((self._name, self._density, self._model))
+        return hash(self._name)
 
     def __eq__(self, x):
         if isinstance(x, Variable):
-            return \
-                self.get_name() == x.get_name() and \
-                self.get_density() == x.get_density() and \
-                self.get_dependencies() == x.get_dependencies() and \
-                self.get_model() == x.get_model() 
+            return self.get_name() == x.get_name()
         else:
             raise Exception("Comparing with the strange type: {}".format(x))
+
+    def __cmp__(self, x):
+        if self == x:
+            return 0
+        return -1
 

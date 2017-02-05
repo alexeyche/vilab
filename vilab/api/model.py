@@ -6,6 +6,8 @@ from vilab.api.variable import Variable
 from vilab.api.density import Density, Unknown, DiracDelta
 from vilab.api.function import FunctionResult
 
+
+
 class Probability(object):
     def __init__(self, model, output, dependencies):
         self._output = output
@@ -27,11 +29,13 @@ class Probability(object):
             logging.info("Describing variable {} with density {} in the context of {}".format(self._output, x, self._model))
             self._output.set_density(x)
             self._output.set_model(self._model)
+            self._model.save_description(self._output, self._dependencies, x)
             return True
         elif isinstance(x, FunctionResult):
             logging.info("Describing variable {} with function {} in the context of {}".format(self._output, x, self._model))
             self._output.set_density(DiracDelta(x))
             self._output.set_model(self._model)
+            self._model.save_description(self._output, self._dependencies, x)
             return True
         elif isinstance(x, Probability):
             return \
@@ -47,27 +51,10 @@ class Probability(object):
     def get_output(self):
         return self._output
 
-class VariableRecord(object):
-    def __init__(self, *args, **kwargs):
-        if len(args) == 0:
-            self.density = kwargs.get("density", Unknown())
-            self.dependencies = kwargs.get("dependencies", [])
-        if len(args) >= 1:
-            self.density = args[0]
-        if len(args) == 2:
-            self.dependencies = args[1]
-                
-
-    def __str__(self):
-        return "VariableRecord({}, {})".format(self.density, self.dependencies)
-
-    def __repr__(self):
-        return str(self)
-
-
 class Model(object):
     def __init__(self, name):
         self._name = name
+        self._descriptions = {}
 
     def __str__(self):
         return "Model({})".format(self._name)
@@ -77,6 +64,15 @@ class Model(object):
 
     def get_name(self):
         return self._name
+
+    def save_description(self, var, deps, density):
+        key = (var, deps)
+        assert not key in self._descriptions, \
+            "Trying to redefine variable {} conditioned on dependencies {} with density {}".format(var, deps, density)
+        self._descriptions[key] = density
+
+    def has_description(self, var, deps):
+        return (var, deps) in self._descriptions
 
     def __call__(self, *args):
         v = args[0]
@@ -91,22 +87,22 @@ class Model(object):
                 assert isinstance(a, Variable), "Expecting variables as input to model"
                 assert len(a._requested_dependencies) == 0, "Conditions for first variables are supported for now"
 
-            dependencies = v._requested_dependencies + list(args[1:])
+            dependencies = tuple(v._requested_dependencies + list(args[1:]))
             v._requested_dependencies = list()
-            v._dependencies = set(dependencies) 
+            v._dependencies = dependencies
             
             logging.info("{} depends on {}".format(v, dependencies))
             return Probability(self, v, dependencies)
         else:
-            dependencies = []
+            dependencies = tuple()
             if len(v._requested_dependencies) > 0:
-                dependencies = v._requested_dependencies
+                dependencies = tuple(v._requested_dependencies)
 
                 v._requested_dependencies = list()
-                v._dependencies = set(dependencies)
+                v._dependencies = dependencies
                 logging.info("{} depends on {}".format(v, dependencies))
             else:
-                v._dependencies = set()
+                v._dependencies = tuple()
                 logging.info("{} is unconditioned".format(v))
             return Probability(self, v, dependencies)
 

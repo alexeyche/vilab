@@ -32,12 +32,12 @@ class Parser(object):
             ctx.density_view if density_view is None else density_view
         )
 
-    def __init__(self, output, feed_dict, structure, batch_size, reuse=False):
+    def __init__(self, output, feed_dict, structure, batch_size, reuse=False, model=None):
         self.feed_dict = feed_dict
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
-        self.default_ctx = Parser.Ctx(output, None, None, None, DensityView.SAMPLE)
+        self.default_ctx = Parser.Ctx(output, None, model, None, DensityView.SAMPLE)
 
         self.variable_set = set()
         self.visited = {}
@@ -108,6 +108,9 @@ class Parser(object):
         
         model, output, dependencies = prob.get_components()
         
+        assert model.has_description(output, dependencies), \
+            "Couldn't find description of variable {} condition on dependencies {} for model {}".format(output, dependencies, model)
+
         return self.deduce(
             output, 
             Parser.Ctx(
@@ -142,7 +145,7 @@ class Parser(object):
         elif ctx.density_view == DensityView.PROBABILITY:
             assert ctx.output in self.feed_dict, "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
             assert not isinstance(dst_elem, DiracDelta), "Can't calculate likelihood value for DiracDelta distribution"
-
+            
             data = self.feed_dict[ctx.output]
             provided_input = Engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
 
@@ -179,6 +182,8 @@ class Parser(object):
         if trivial_deduce:
             logging.debug("Found output variable {} in inputs, considering this as trivial deduce, will proceed graph calculation".format(elem))
         
+        assert ctx.output == elem or ctx.dependencies is None or elem in ctx.dependencies, \
+            "Deducer met variable {} that wasn't specified as dependent variable".format(elem) 
         
         if elem in self.feed_dict and not trivial_deduce:
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
@@ -191,7 +196,6 @@ class Parser(object):
                 self.variable_set.remove(elem)
             return provided_input
         else:
-            assert ctx.output == elem or elem in ctx.dependencies, "Deducer met variable {} that wasn't specified as dependent variable".format(elem) 
             elem_model = elem.get_model()
             elem_structure = self.structure.get(elem)
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
@@ -224,9 +228,11 @@ class Parser(object):
         ]
 
         if isinstance(elem.get_fun(), Function):
-            elem_structure = self.structure.get(elem, ctx.requested_shape)
+            elem_structure = self.structure.get(elem.get_fun(), ctx.requested_shape)
+            
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
-                            
+            assert not ctx.model is None, "Need to specify context model for {} calculation".format(elem)
+
             logging.info("Calling function {}/{} with structure {}, act: {}, arguments: {}".format(
                 ctx.model.get_name(), elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
             ))
@@ -237,7 +243,7 @@ class Parser(object):
                 name = "{}/{}".format(ctx.model.get_name(), elem.get_name()),
                 act = elem.get_act(),
                 reuse = self.reuse,
-                weight_factor = 0.1
+                weight_factor = 0.25
             )
         elif isinstance(elem.get_fun(), BasicFunction):
             logging.info("Calling basic function {}, arguments: {}".format(
@@ -274,7 +280,6 @@ def get_data_size(feed_dict):
             assert batch_size == v.shape[0], "Batch size is not the same through feed data"
         else:
             batch_size = v.shape[0]    
-    assert not batch_size is None, "Need to specify batch size, system couldn't infer this from input data"
     return batch_size
 
 
@@ -299,11 +304,9 @@ def get_data_slice(element_id, batch_size, feed_dict):
 
 
 def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
-    data_size = get_data_size(feed_dict)
-
     element_id = 0
     outputs = None
-    while element_id < data_size:
+    while len(feed_dict) == 0 or element_id < get_data_size(feed_dict):
         data_for_input = {}
         data_slice, element_id = get_data_slice(element_id, batch_size, feed_dict)
         
@@ -313,7 +316,7 @@ def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
             data_for_input[k] = data
 
         batch_outputs = Engine.run(
-            leaves_to_run, 
+            leaves_to_run + Engine._debug_outputs, 
             data_for_input
         )
         if outputs is None:
@@ -325,15 +328,21 @@ def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
 
         _ = gc.collect()
     
-    return outputs    
+    return outputs  
 
-def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False):    
+def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silent=False, model=None):    
+    log_level = logging.getLogger().level
+    if silent:
+        setup_log(logging.CRITICAL)        
+        
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
     
-    assert not batch_size is None or data_size < 10000 , "Got too big data size, need to point proper batch_size in arguments"
+    assert not batch_size is None or data_size is None or data_size < 10000, \
+        "Got too big data size, need to point proper batch_size in arguments"
 
     if batch_size is None:
+        assert not data_size is None, "Need to specify batch size"
         batch_size = data_size
 
     results = []
@@ -341,7 +350,7 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False):
     if is_sequence(elem):
         top_elem = elem[0]
     
-    parser = Parser(top_elem, feed_dict, structure, batch_size, reuse)
+    parser = Parser(top_elem, feed_dict, structure, batch_size, reuse, model)
     if is_sequence(elem):
         for subelem in elem:
             results.append(parser.deduce(subelem))
@@ -350,6 +359,10 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False):
 
     logging.debug("Collected {}".format(results))
     outputs = _run(results, feed_dict, batch_size, parser.get_engine_inputs())
+
+    if silent:
+        setup_log(log_level)        
+
     if not is_sequence(elem):
         return outputs[0]
     return outputs
@@ -392,13 +405,27 @@ def maximize(
         leaves.append(parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m)))
         monitor_names.append(m.get_name() if hasattr(m, "get_name") else str(m))
 
-
     monitoring_values = []
+
+    import tensorflow as tf
+    import os
+    writer = tf.summary.FileWriter("{}/tf".format(os.environ["HOME"]), graph=tf.get_default_graph())
+
 
     logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
     for e in xrange(epochs):
+        # with tf.variable_scope("p/logit", reuse=True) as scope:
+        #     wp = tf.get_variable("W0-0", (2,12))
+        #     wp2 = tf.get_variable("W1-0", (12, 4))
+        
         returns = _run(leaves + [opt_output], feed_dict, batch_size, parser.get_engine_inputs())
         
+        # st_id = 1+len(monitor.elems)+1
+        # from util import shm
+        # import tensorflow as tf
+        
+        # shm(returns[st_id], returns[st_id+1], returns[st_id+2], returns[st_id+3], returns[st_id+4], returns[st_id+5])
+
         if e % monitor.freq == 0:
             monitor_returns = _run(
                 leaves, 

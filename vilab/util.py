@@ -5,15 +5,20 @@ import numpy as np
 import math
 import collections
 
-def shm(matrix, file=None):
-    plt.imshow(np.squeeze(matrix).T)
-    plt.colorbar()
+def shm(*matrices, **kwargs):
+    fig = plt.figure()
 
-    if file:
-        plt.savefig(file)
+    for m_id, matrix in enumerate(matrices):
+        plt.subplot(1, len(matrices),m_id+1)
+        plt.imshow(np.squeeze(matrix).T)
+        plt.colorbar()
+
+    if kwargs.get("file"):
+        plt.savefig(kwargs["file"])
         plt.clf()
     else:
         plt.show()
+
 
 def smooth(signal, sigma=0.01, filter_size=50):
     lf_filter = np.exp(-np.square(0.5-np.linspace(0.0, 1.0, filter_size))/sigma)

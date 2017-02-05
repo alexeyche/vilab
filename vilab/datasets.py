@@ -44,10 +44,6 @@ def _download_mnist_binarized(datapath):
 
 
 def _download_mnist_realval(dataset):
-    """
-    Download the MNIST dataset if it is not present.
-    :return: The train, test and validation set.
-    """
     origin = (
         "http://www.iro.umontreal.ca/~lisa/deep/data/mnist/mnist.pkl.gz"
     )
@@ -55,11 +51,6 @@ def _download_mnist_realval(dataset):
     urllib.urlretrieve(origin, dataset)
 
 def load_mnist_realval(dataset=_get_datafolder_path()+'/mnist_real/mnist.pkl.gz'):
-    '''
-    Loads the real valued MNIST dataset
-    :param dataset: path to dataset file
-    :return: None
-    '''
     if not os.path.isfile(dataset):
         datasetfolder = os.path.dirname(dataset)
         if not os.path.exists(datasetfolder):
@@ -92,6 +83,39 @@ def load_mnist_binarized(dataset=_get_datafolder_path()+'/mnist_binarized/mnist.
     f.close()
     return x_train, x_valid, x_test
 
+def _download_mnist_binarized_small(datapath):
+    datafiles = {
+        "train": "http://www.cs.toronto.edu/~larocheh/public/"
+                 "datasets/binarized_mnist/binarized_mnist_train.amat",
+        "valid": "http://www.cs.toronto.edu/~larocheh/public/datasets/"
+                 "binarized_mnist/binarized_mnist_valid.amat",
+        "test": "http://www.cs.toronto.edu/~larocheh/public/datasets/"
+                "binarized_mnist/binarized_mnist_test.amat"
+    }
+    datasplits = {}
+    for split in datafiles.keys():
+        logging.info("Downloading {} data into {}".format(split, datapath))
+        local_file = datapath + '/binarized_mnist_small_%s.npy'%(split)
+        datasplits[split] = np.loadtxt(urllib.urlretrieve(datafiles[split])[0])[:1000]
+
+    f = gzip.open(datapath +'/mnist.pkl.gz', 'w')
+    pkl.dump([datasplits['train'],datasplits['valid'],datasplits['test']],f)
+
+
+def load_mnist_binarized_small(dataset=_get_datafolder_path()+'/mnist_binarized_small/mnist.pkl.gz'):
+    if not os.path.isfile(dataset):
+        datasetfolder = os.path.dirname(dataset)
+        if not os.path.exists(datasetfolder):
+            os.makedirs(datasetfolder)
+        _download_mnist_binarized_small(datasetfolder)
+
+    f = gzip.open(dataset, 'rb')
+    x_train, x_valid, x_test = pkl.load(f)
+    f.close()
+    return x_train, x_valid, x_test
+
+
+
 def _download_iris(datapath):
     origin = "https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"
     logging.info("Downloading data from {}".format(origin))
@@ -113,3 +137,14 @@ def load_iris_dataset(dataset=_get_datafolder_path() + "/iris/iris.csv"):
     test_data_classes = np.asarray([ uniq_classes.index(cl) for cl in test_data_classes ])
 
     return test_data, test_data_classes
+
+def load_toy_dataset():
+    test_data = np.asarray([
+        [1.0, 1.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0, 1.0],
+        [0.0, 1.0, 1.0, 1.0]
+    ])
+    test_data_classes = [0, 1, 2, 3]
+    return test_data, test_data_classes
+

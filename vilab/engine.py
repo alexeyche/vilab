@@ -82,9 +82,25 @@ class Engine(object):
     def likelihood(cls, density, data, logform=False):
         density_obj = cls.get_density(density)
         
+        # clipped_data = tf.where(data >= 1e-08, data, 1e-08 * tf.ones_like(data))
+        
         ret = density_obj._log_prob(data)
         
-        ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
+        # from datasets import load_mnist_binarized_small
+        # from util import shm
+
+        # sess = cls.get_session()
+        # ret_v, data_v = sess.run([ret, data], 
+        #     feed_dict={
+        #         cls._debug_input_data["x"]: load_mnist_binarized_small()[0][:100],
+        #         cls._debug_input_data["Binomial"]: load_mnist_binarized_small()[0][:100]
+        #     })
+        
+
+        # shm(ret_v, data_v)
+
+
+        ret_sum = tf.reduce_mean(ret, ret.get_shape().ndims-1, keep_dims=True)
         
         if logform:
             return ret_sum
@@ -119,6 +135,8 @@ class Engine(object):
     def get_optimizer(cls, optimizer, learning_rate):
         if optimizer == Optimizer.ADAM:
             return tf.train.AdamOptimizer(learning_rate=learning_rate)
+        elif optimizer == Optimizer.SGD:
+            return tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
         else:
             raise Exception("Unsupported optimizer: {}".format(optimizer))
 
@@ -148,6 +166,8 @@ class Engine(object):
             return tf.nn.elu
         elif bf == tanh:
             return tf.nn.tanh
+        elif bf == sigmoid:
+            return tf.nn.sigmoid
         elif bf == Arithmetic.ADD:
             return tf.add
         elif bf == Arithmetic.SUB:
@@ -241,6 +261,7 @@ class Engine(object):
         return inputs[0]
 
 
+
     @classmethod
     def calculate_metrics(cls, metrics, *args):
         if isinstance(metrics, KL):
@@ -249,8 +270,22 @@ class Engine(object):
             assert isinstance(args[1], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[1])
 
             ret = ds.kl(args[0], args[1])
+            # ret = -0.5*(1 + tf.log(args[0].sigma ** 2) - args[0].mu**2 - args[0].sigma ** 2)
+
+            ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
             
-            return tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
+            # from datasets import load_mnist_binarized_small
+            # from util import shm
+
+            # sess = cls.get_session()
+
+            # ret_v, f_mu, f_var, s_mu, s_var, ret_sum_v = sess.run([ret, args[0].mu, args[0].sigma, args[1].mu, args[1].sigma, ret_sum], 
+            #     feed_dict={cls._debug_input_data["x"]: load_mnist_binarized_small()[0][:100]})
+            
+
+            # shm(ret_v, f_mu, f_var)
+
+            return ret_sum
         elif isinstance(metrics, SquaredLoss):
             assert len(args) == 2, "Need two arguments for SquaredLoss metric"
             

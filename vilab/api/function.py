@@ -35,6 +35,8 @@ class Arithmetic(object):
         return FunctionResult(Arithmetic.SUB, self, other)
     def __mul__(self, other):
         return FunctionResult(Arithmetic.MUL, self, other)
+    def __rmul__(self, other):
+        return FunctionResult(Arithmetic.MUL, self, other)
     def __div__(self, other):
         return FunctionResult(Arithmetic.DIV, self, other)
     def __pow__(self, other):
@@ -130,6 +132,7 @@ softplus = BasicFunction("softplus")
 log = BasicFunction("log")
 elu = BasicFunction("elu")
 tanh = BasicFunction("tanh")
+sigmoid = BasicFunction("sigmoid")
 
 
 

@@ -16,7 +16,7 @@ p, q = Model("p"), Model("q")
 
 
 
-mlp = Function("mlp", act=elu)
+mlp = Function("mlp", act=relu)
 
 mu = Function("mu", mlp)
 var = Function("var", mlp, act=softplus)
@@ -27,7 +27,7 @@ q(z | x) == N(mu(x), var(x))
 p(x | z) == B(logit(z))
 
 
-LL = - KL(q(z | x), N0) + log(p(x | z))
+LL = log(p(x | z))
 
 x_train, x_classes = load_toy_dataset()
 batch_size, ndim = x_train.shape
@@ -35,7 +35,7 @@ batch_size, ndim = x_train.shape
 env = Env("toy_example", clear_pics=True)
 
 structure = {
-	mlp: (256, 256),
+	mlp: (12,),
 	z: 2,
 	logit: ndim
 }
@@ -64,27 +64,28 @@ def monitor_callback(ep, *args):
 out, mon_out = maximize(
 	LL, 
 	epochs=1000,
-	learning_rate=1e-03,
+	learning_rate=0.001,
+	optimizer=Optimizer.SGD,
 	feed_dict={x: x_train},
 	structure=structure,
 	batch_size=batch_size,
 	monitor=Monitor(
-		[KL(q(z | x), N0), log(p(x | z))],
-		# [x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
+		# [KL(q(z | x), N0), log(p(x | z))],
+		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
 		freq=100,
-		# callback=monitor_callback
+		callback=monitor_callback
 	)
 )
 
 
-shl(
-	mon_out[:,2],
-	mon_out[:,3],
-	mon_out[:,4],
-	np.exp(0.5 * mon_out[:,5]),
-	labels = ["KL", "log_p_x", "mu", "var"],
-	file = env.run("result.png")
-)
+# shl(
+# 	mon_out[:,2],
+# 	mon_out[:,3],
+# 	mon_out[:,4],
+# 	np.exp(0.5 * mon_out[:,5]),
+# 	labels = ["KL", "log_p_x", "mu", "var"],
+# 	file = env.run("result.png")
+# )
 
 
 

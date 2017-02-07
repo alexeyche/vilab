@@ -10,7 +10,7 @@ import cPickle as cPkl
 
 
 def _get_datafolder_path():
-	env = Env()	
+	env = Env(".vilab")	
 	return env.dataset()
 
 def _unpickle(f):
@@ -140,10 +140,10 @@ def load_iris_dataset(dataset=_get_datafolder_path() + "/iris/iris.csv"):
 
 def load_toy_dataset():
     test_data = np.asarray([
-        [1.0, 1.0, 1.0, 0.0],
-        [1.0, 1.0, 0.0, 1.0],
-        [1.0, 0.0, 1.0, 1.0],
-        [0.0, 1.0, 1.0, 1.0]
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0]
     ])
     test_data_classes = [0, 1, 2, 3]
     return test_data, test_data_classes

@@ -12,6 +12,7 @@ import types
 from collections import namedtuple
 import numpy as np
 import gc
+import os
 
 class DensityView(object):
     SAMPLE = "sample"
@@ -85,7 +86,7 @@ class Parser(object):
         
         logging.debug("level: {}, elem: {}, ctx: {}".format(self.level, elem, ctx))
         if logging.getLogger().level == logging.DEBUG:
-            setup_log(logging.DEBUG, self.level)        
+            setup_log(logging.DEBUG, ident_level=self.level)        
         cb_to_call = [ cb for tp, cb in self.type_callbacks.iteritems() if isinstance(elem, tp)]
         assert len(cb_to_call) > 0, "Deducer got unexpected element: {}".format(elem)
         assert len(cb_to_call) == 1, "Got too many callback matches for element: {}".format(elem)
@@ -97,7 +98,7 @@ class Parser(object):
         
         self.level -= 1
         if logging.getLogger().level == logging.DEBUG:
-            setup_log(logging.DEBUG, self.level)        
+            setup_log(logging.DEBUG, ident_level=self.level)        
         
         logging.debug("level out: {}, result: {}".format(self.level, result))
         return result
@@ -236,6 +237,7 @@ class Parser(object):
             logging.info("Calling function {}/{} with structure {}, act: {}, arguments: {}".format(
                 ctx.model.get_name(), elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
             ))
+
             # requested_shape = elem.get_size()[0]
             return Engine.function(
                 *deduced_args, 
@@ -243,7 +245,7 @@ class Parser(object):
                 name = "{}/{}".format(ctx.model.get_name(), elem.get_name()),
                 act = elem.get_act(),
                 reuse = self.reuse,
-                weight_factor = 0.25
+                weight_factor = 1.0
             )
         elif isinstance(elem.get_fun(), BasicFunction):
             logging.info("Calling basic function {}, arguments: {}".format(
@@ -314,7 +316,7 @@ def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
             data = data_slice.get(v)
             assert not data is None, "Failed to find {} in feed_dict".format(v)
             data_for_input[k] = data
-
+        
         batch_outputs = Engine.run(
             leaves_to_run + Engine._debug_outputs, 
             data_for_input
@@ -326,8 +328,6 @@ def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
                 if not bout is None:
                     outputs[out_id] = np.concatenate([out, bout])
 
-        _ = gc.collect()
-    
     return outputs  
 
 def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silent=False, model=None):    
@@ -397,7 +397,7 @@ def maximize(
     
     parser = Parser(elem, feed_dict, structure, batch_size)
     leaves.append(parser.deduce(elem))
-    
+        
     opt_output = Engine.optimization_output(leaves[0], optimizer, learning_rate)
 
     monitor_names = []
@@ -407,24 +407,11 @@ def maximize(
 
     monitoring_values = []
 
-    import tensorflow as tf
-    import os
-    writer = tf.summary.FileWriter("{}/tf".format(os.environ["HOME"]), graph=tf.get_default_graph())
-
+    engine_inputs = parser.get_engine_inputs()
 
     logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
     for e in xrange(epochs):
-        # with tf.variable_scope("p/logit", reuse=True) as scope:
-        #     wp = tf.get_variable("W0-0", (2,12))
-        #     wp2 = tf.get_variable("W1-0", (12, 4))
-        
-        returns = _run(leaves + [opt_output], feed_dict, batch_size, parser.get_engine_inputs())
-        
-        # st_id = 1+len(monitor.elems)+1
-        # from util import shm
-        # import tensorflow as tf
-        
-        # shm(returns[st_id], returns[st_id+1], returns[st_id+2], returns[st_id+3], returns[st_id+4], returns[st_id+5])
+        returns = _run(leaves + [opt_output], feed_dict, batch_size, engine_inputs)
 
         if e % monitor.freq == 0:
             monitor_returns = _run(
@@ -454,7 +441,6 @@ def maximize(
             
             monitoring_values.append(monitor_v)
 
-            
-        _ = gc.collect()
+        # _ = gc.collect()
 
     return returns[0], np.asarray(monitoring_values)

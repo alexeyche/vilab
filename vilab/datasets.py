@@ -146,5 +146,7 @@ def load_toy_dataset():
         [0.0, 0.0, 0.0, 1.0]
     ])
     test_data_classes = [0, 1, 2, 3]
+    test_data = np.concatenate([test_data]*25)
+    test_data_classes = np.concatenate([test_data_classes]*25)
     return test_data, test_data_classes
 

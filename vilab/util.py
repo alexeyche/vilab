@@ -6,8 +6,6 @@ import math
 import collections
 
 def shm(*matrices, **kwargs):
-    fig = plt.figure()
-
     for m_id, matrix in enumerate(matrices):
         plt.subplot(1, len(matrices),m_id+1)
         plt.imshow(np.squeeze(matrix).T)

@@ -5,20 +5,19 @@ from vilab.log import setup_log
 from vilab.api import *
 from vilab.util import *
 from vilab.calc import deduce, maximize, Monitor
-from vilab.datasets import load_mnist_binarized, load_mnist_binarized_small
+from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 
-# setup_log(logging.DEBUG)
 setup_log(logging.INFO)
 
 x, z = Variable("x"), Variable("z")
 p, q = Model("p"), Model("q")
 
 
-mlp = Function("mlp", act=elu)
+mlp = Function("mlp", act=softplus)
 
 mu = Function("mu", mlp)
-var = Function("var", mlp, act=softplus)
+var = Function("var", mlp)
 logit = Function("logit", mlp)
 
 
@@ -26,9 +25,10 @@ q(z | x) == N(mu(x), var(x))
 p(x | z) == B(logit(z))
 
 
-LL = - KL(q(z | x), N0) + log(p(x | z))
+LL = - KL(q(z | x), N0) + p(x | z)
 
-x_train, x_valid, x_test = load_mnist_binarized()
+x_train, t_train, x_valid, t_valid, x_test, t_test = load_mnist_realval()
+
 
 ndim = x_train.shape[1]
 get_pic = lambda arr: arr.reshape(np.sqrt(ndim), np.sqrt(ndim)).T
@@ -36,34 +36,41 @@ get_pic = lambda arr: arr.reshape(np.sqrt(ndim), np.sqrt(ndim)).T
 env = Env("mnist", clear_pics=True)
 
 def monitor_callback(ep, *args):
-	# x_sample = deduce(x, feed_dict={z: np.random.randn(100, 100)}, structure={x: ndim}, reuse=True, silent=True)
-	# shm(get_pic(x_sample[0,:]), file=env.run("x_sample_{}.png".format(ep)))
 	shm(get_pic(args[0][0,:]), file=env.run("x_output_{}.png".format(ep)))
-	
+	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=t_test)
 
 out, mon_out = maximize(
 	LL, 
-	epochs=1000,
-	learning_rate=3e-04,
+	epochs=75,
+	learning_rate=0.001,
 	feed_dict={x: x_train},
 	structure={
 		mlp: (200, 200,),
 		logit: ndim,
-		z: 100
+		z: 2
 	},
 	batch_size=100,
 	monitor=Monitor(
-		[x, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
-		freq=10,
-		feed_dict={x: x_test},
-		callback=monitor_callback
+		[x, z, KL(q(z | x), N0), p(x | z)],
+		freq=5,
+		feed_dict={x: x_test[:100]},
+		# callback=monitor_callback
 	)
 )
 
 shl(
-	mon_out[:,1],
 	mon_out[:,2],
-	mon_out[:,3],
-	np.exp(0.5 * mon_out[:,4]),
-	labels = ["KL", "log_p_x", "mu", "var"]
+	mon_out[:,3]*0.01,
+	labels = ["KL", "log_p_x"]
 )
+
+
+m = deduce(
+	mu(x), 
+	model=q,
+	feed_dict={x: x_test[:5000,:]}, 
+	structure={mlp: (200, 200), mu: 2}, 
+	reuse=True
+)
+
+shs(m, labels=t_test[:5000], file=env.run("embedding.png"))

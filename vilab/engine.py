@@ -45,11 +45,14 @@ class Engine(object):
         args = density.get_args()
         if isinstance(density, N):
             N0 = tf.random_normal(shape)
+            
             mu = args[0]
             stddev = tf.exp(0.5 * args[1])
+            
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
-            return tf.add(mu, stddev * N0, name="sample_{}".format(density.get_name()))
+            
+            return tf.add(mu, tf.mul(stddev, N0), name="sample_{}".format(density.get_name()))
         elif isinstance(density, B):
             U0 = tf.random_uniform(shape)
             sample = tf.less(U0, tf.nn.sigmoid(args[0]), name="sample_{}".format(density.get_name()))
@@ -66,8 +69,13 @@ class Engine(object):
         if isinstance(density, N):
             mu = args[0]
             stddev = tf.exp(0.5 * args[1])
+            
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
+
+            # mu = tf.Print(mu,[mu], "mu", summarize=5)
+            # mu = tf.Print(mu,[stddev], "sigma", summarize=5)
+
             return ds.Normal(mu, stddev, name=density.get_name())
         elif isinstance(density, B):
             logits = args[0]
@@ -81,31 +89,37 @@ class Engine(object):
     @classmethod
     def likelihood(cls, density, data, logform=False):
         density_obj = cls.get_density(density)
-        
-        # clipped_data = tf.where(data >= 1e-08, data, 1e-08 * tf.ones_like(data))
-        
+        # ret_sum = \
+        #     tf.reduce_sum(data * tf.log(1e-8 + density_obj.p)
+        #                    + (1-data) * tf.log(1e-5 + 1 - density_obj.p),
+        #                    1)
+
         ret = density_obj._log_prob(data)
         
-        # from datasets import load_mnist_binarized_small
+        # ret = tf.Print(ret, [ret], "LL")
+
+        # from datasets import load_toy_dataset
         # from util import shm
 
         # sess = cls.get_session()
-        # ret_v, data_v = sess.run([ret, data], 
+        # ret_v, base_v = sess.run([ret, base], 
         #     feed_dict={
-        #         cls._debug_input_data["x"]: load_mnist_binarized_small()[0][:100],
-        #         cls._debug_input_data["Binomial"]: load_mnist_binarized_small()[0][:100]
+        #         cls._debug_input_data["x"]: load_toy_dataset()[0],
+        #         cls._debug_input_data["Binomial"]: load_toy_dataset()[0]
         #     })
         
 
-        # shm(ret_v, data_v)
+        # shm(ret_v, base_v)
 
 
-        ret_sum = tf.reduce_mean(ret, ret.get_shape().ndims-1, keep_dims=True)
+        ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
         
-        if logform:
-            return ret_sum
-        else:
-            return tf.exp(ret_sum)
+        return ret_sum
+
+        # if logform:
+        #     return ret_sum
+        # else:
+        #     return tf.exp(ret_sum)
         
     @classmethod
     def get_session(cls):
@@ -116,7 +130,6 @@ class Engine(object):
     @classmethod
     def open_session(cls):
         sess = tf.Session()
-        sess.run(tf.global_variables_initializer())
         cls.CURRENT_SESSION = sess
         return sess
 
@@ -143,7 +156,14 @@ class Engine(object):
     @classmethod
     def optimization_output(cls, value, optimizer, learning_rate):
         optimizer_tf = cls.get_optimizer(optimizer, learning_rate)
-        return optimizer_tf.minimize(-tf.reduce_mean(value))
+        
+        tvars = tf.trainable_variables()
+        grads = tf.gradients(-tf.reduce_mean(value), tvars)
+
+        # grads, _ = tf.clip_by_global_norm(grads_raw, 5.0)
+        apply_grads = optimizer_tf.apply_gradients(zip(grads, tvars))
+
+        return apply_grads
 
     @classmethod
     def provide_input(cls, var_name, shape):
@@ -269,9 +289,22 @@ class Engine(object):
             assert isinstance(args[0], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[0])
             assert isinstance(args[1], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[1])
 
+            
             ret = ds.kl(args[0], args[1])
-            # ret = -0.5*(1 + tf.log(args[0].sigma ** 2) - args[0].mu**2 - args[0].sigma ** 2)
 
+            # ret = -0.5 * tf.reduce_sum(1 + tf.log(args[0].sigma)
+            #                                    - tf.square(args[0].mu) 
+            #                                    - args[0].sigma, 1)
+            # ret = tf.Print(ret,[ret], "ret", summarize=20)
+            
+            # ret = tf.Print(ret,[args[0].mu], "mu", summarize=20)
+            # ret = tf.Print(ret,[args[0].sigma], "sigma", summarize=20)
+
+            # ret = tf.Print(ret,[args[1].mu], "mu0", summarize=20)
+            # ret = tf.Print(ret,[args[1].sigma], "sigma0", summarize=20)
+
+            # ret = 0.5*(1 + tf.log(args[0].sigma ** 2) - args[0].mu**2 - args[0].sigma ** 2)
+            # return ret
             ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
             
             # from datasets import load_mnist_binarized_small

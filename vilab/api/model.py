@@ -4,7 +4,6 @@ import logging
 from collections import defaultdict
 from vilab.api.variable import Variable
 from vilab.api.density import Density, Unknown, DiracDelta
-from vilab.api.function import FunctionResult
 
 
 
@@ -13,18 +12,23 @@ class Probability(object):
         self._output = output
         self._dependencies = dependencies
         self._model = model
+        self._log_form_flag = False
 
     def __str__(self):
-        return "Probability {}({} | {})".format(
+        return "{}{}({} | {}){}".format(
+            ("" if not self._log_form_flag else "log("),
             self._model.get_name(), 
-            self._output, 
-            ",".join([str(d) for d in self._dependencies])
+            self._output.get_name(), 
+            ",".join([d.get_name() for d in self._dependencies]),
+            ("" if not self._log_form_flag else ")")
         )
 
     def __repr__(self):
         return str(self)
 
     def __eq__(self, x):
+        from vilab.api.function import FunctionResult
+
         if isinstance(x, Density):
             logging.info("Describing variable {} with density {} in the context of {}".format(self._output, x, self._model))
             self._output.set_density(x)
@@ -50,6 +54,12 @@ class Probability(object):
 
     def get_output(self):
         return self._output
+
+    def set_log_form(self, log_form_flag):
+        self._log_form_flag = log_form_flag
+
+    def is_log_form(self):
+        return self._log_form_flag
 
 class Model(object):
     def __init__(self, name):

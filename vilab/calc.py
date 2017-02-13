@@ -9,7 +9,7 @@ import logging
 import copy
 import numbers
 import types
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 import numpy as np
 import gc
 import os
@@ -43,6 +43,10 @@ class Parser(object):
         self.variable_set = set()
         self.visited = {}
         self.engine_inputs = {}
+        
+        self.shape_info = []
+
+        self.sample_configuration_stack = []
 
         self.type_callbacks = {
             Probability: self.probability,
@@ -94,6 +98,8 @@ class Parser(object):
         
         result = cb_to_call[0](elem, ctx)
         
+        self.shape_info.append(Engine.get_shape(result))
+        
         self.update_visited_value(elem, ctx, result)
         
         self.level -= 1
@@ -111,6 +117,11 @@ class Parser(object):
         
         assert model.has_description(output, dependencies), \
             "Couldn't find description of variable {} condition on dependencies {} for model {}".format(output, dependencies, model)
+        
+        density_view = ctx.density_view if ctx.density_view == DensityView.DENSITY else DensityView.PROBABILITY 
+        
+        assert density_view != DensityView.PROBABILITY or prob.is_log_form(), \
+            "To deduce likelihood probability must be uplifted with the log function. Use log({})".format(prob)
 
         return self.deduce(
             output, 
@@ -119,12 +130,14 @@ class Parser(object):
                 ctx.requested_shape,
                 model,
                 dependencies,
-                ctx.density_view if ctx.density_view == DensityView.DENSITY else DensityView.PROBABILITY 
+                density_view
             )
         ) 
 
 
     def density(self, elem, ctx):
+        cfg = elem.get_config()
+
         logging.debug("Deducer({}): deducing for density".format(elem))
         dst_elem = copy.copy(elem)
         logging.debug("Deducer({}): Deducing arguments ...".format(elem))
@@ -142,11 +155,18 @@ class Parser(object):
         if ctx.density_view == DensityView.SAMPLE:
             assert not ctx.requested_shape is None, "Shape information is not provided to sample {}".format(dst_elem)
             logging.info("Sampling {} with shape {}x{}".format(elem, self.batch_size, ctx.requested_shape))
-            return Engine.sample(dst_elem, (self.batch_size, ctx.requested_shape))
+        
+            self.sample_configuration_stack.append(cfg)
+            
+            return Engine.sample(
+                dst_elem, 
+                (self.batch_size, ctx.requested_shape), 
+                importance_samples=cfg.importance_samples
+            )
         elif ctx.density_view == DensityView.PROBABILITY:
             assert ctx.output in self.feed_dict, "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
             assert not isinstance(dst_elem, DiracDelta), "Can't calculate likelihood value for DiracDelta distribution"
-            
+
             data = self.feed_dict[ctx.output]
             provided_input = Engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
 
@@ -215,6 +235,7 @@ class Parser(object):
                     dependencies = deps
                 )
             )
+            
             if not recursion:
                 self.variable_set.remove(elem)
             return result
@@ -237,15 +258,17 @@ class Parser(object):
             logging.info("Calling function {}/{} with structure {}, act: {}, arguments: {}".format(
                 ctx.model.get_name(), elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
             ))
+            
+            cfg = elem.get_fun().get_config()
 
-            # requested_shape = elem.get_size()[0]
             return Engine.function(
                 *deduced_args, 
                 size = elem_structure, 
                 name = "{}/{}".format(ctx.model.get_name(), elem.get_name()),
                 act = elem.get_act(),
                 reuse = self.reuse,
-                weight_factor = 1.0
+                weight_factor = cfg.weight_factor,
+                use_batch_norm = cfg.use_batch_norm if not elem.get_act() is None else False
             )
         elif isinstance(elem.get_fun(), BasicFunction):
             logging.info("Calling basic function {}, arguments: {}".format(
@@ -393,17 +416,15 @@ def maximize(
     if batch_size is None:
         batch_size = data_size
     
-    leaves = []
-    
     parser = Parser(elem, feed_dict, structure, batch_size)
-    leaves.append(parser.deduce(elem))
+    to_optimize = parser.deduce(elem)
         
-    opt_output = Engine.optimization_output(leaves[0], optimizer, learning_rate)
+    opt_output = Engine.optimization_output(to_optimize, optimizer, learning_rate)
 
-    monitor_names = []
+    to_monitor = OrderedDict()
     for m in monitor.elems:
-        leaves.append(parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m)))
-        monitor_names.append(m.get_name() if hasattr(m, "get_name") else str(m))
+        name = m.get_name() if hasattr(m, "get_name") else str(m)
+        to_monitor[name] = parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m))
 
     monitoring_values = []
 
@@ -411,11 +432,11 @@ def maximize(
 
     logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
     for e in xrange(epochs):
-        returns = _run(leaves + [opt_output], feed_dict, batch_size, engine_inputs)
+        returns = _run([to_optimize, opt_output], feed_dict, batch_size, engine_inputs)
 
         if e % monitor.freq == 0:
             monitor_returns = _run(
-                leaves, 
+                [to_optimize] + to_monitor.values(), 
                 monitor.feed_dict if not monitor.feed_dict is None else feed_dict,
                 batch_size, 
                 parser.get_engine_inputs()
@@ -431,12 +452,9 @@ def maximize(
             if not monitor.callback is None:
                 monitor.callback(e, *monitor_v)
             monitor_v = [np.mean(v) for v in monitor_v]
-            for n, mv, v in zip(monitor_names, monitor_v, returns[1:-1]):
-                if not monitor.feed_dict is None:
-                    mon_str = "{}, monitor value: {}".format(np.mean(v), np.mean(mv))
-                else:
-                    mon_str = "{}".format(np.mean(mv))
-                
+            for n, mv in zip(to_monitor.keys(), monitor_v):
+                mon_str = "{}".format(np.mean(mv))
+                    
                 logging.info("    {}: {}".format(n, mon_str))
             
             monitoring_values.append(monitor_v)

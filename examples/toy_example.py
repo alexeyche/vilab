@@ -13,8 +13,6 @@ setup_log(logging.INFO)
 x, z = Variable("x"), Variable("z")
 p, q = Model("p"), Model("q")
 
-
-
 mlp = Function("mlp", act=softplus)
 
 mu = Function("mu", mlp)

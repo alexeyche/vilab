@@ -8,10 +8,19 @@ from vilab.calc import deduce, maximize, Monitor
 from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 
+Function.configure(
+	use_batch_norm = False,
+)
+
+N.configure(
+	importance_samples = 1
+)
+
 setup_log(logging.INFO)
 
 x, z = Variable("x"), Variable("z")
 p, q = Model("p"), Model("q")
+
 
 
 mlp = Function("mlp", act=softplus)
@@ -25,7 +34,8 @@ q(z | x) == N(mu(x), var(x))
 p(x | z) == B(logit(z))
 
 
-LL = - KL(q(z | x), N0) + p(x | z)
+LL = - KL(q(z | x), N0) + log(p(x | z))
+
 
 x_train, t_train, x_valid, t_valid, x_test, t_test = load_mnist_realval()
 
@@ -51,17 +61,19 @@ out, mon_out = maximize(
 	},
 	batch_size=100,
 	monitor=Monitor(
-		[x, z, KL(q(z | x), N0), p(x | z)],
+		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
 		freq=5,
-		feed_dict={x: x_test[:100]},
-		# callback=monitor_callback
+		feed_dict={x: x_test},
+		callback=monitor_callback
 	)
 )
 
 shl(
 	mon_out[:,2],
 	mon_out[:,3]*0.01,
-	labels = ["KL", "log_p_x"]
+	mon_out[:,4],
+	np.exp(0.5*mon_out[:,5]),
+	labels = ["KL", "log_p_x", "mu", "var"]
 )
 
 

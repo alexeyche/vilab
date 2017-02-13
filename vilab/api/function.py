@@ -1,7 +1,7 @@
 
 import logging
 from ..util import is_sequence
-
+from ..config import Config
 
 class BasicFunction(object):
     def __init__(self, name):
@@ -47,8 +47,6 @@ class Arithmetic(object):
         return FunctionResult(Arithmetic.NEG, self)
 
 
-
-
 class FunctionResult(Arithmetic):
     def __init__(self, fun, *args):
         self._fun = fun
@@ -82,11 +80,32 @@ class FunctionResult(Arithmetic):
                 self._args == x._args
         return False
 
+
+
+
+def function_configure(use_batch_norm=False, weight_factor=1.0):
+    cfg = Config()
+    cfg.use_batch_norm = use_batch_norm
+    cfg.weight_factor = weight_factor
+    return cfg
+
 class Function(object):
+    @classmethod
+    def configure(cls, **kwargs):
+        cls._CONFIG = function_configure(**kwargs)
+
+    _CONFIG = function_configure()
+
+
     def __init__(self, name, *parents, **kwargs):
         self._act = kwargs.get("act")
+        self._batch_norm = kwargs.get("batch_norm")
         self._name = name
         self._parent_funs = list(parents)
+        self._config = Function._CONFIG.copy()
+
+    def get_config(self):
+        return self._config
 
     def __str__(self):
         return "Function({})".format(self.get_name())
@@ -129,11 +148,23 @@ class Function(object):
 relu = BasicFunction("relu")
 linear = BasicFunction("linear")
 softplus = BasicFunction("softplus")
-log = BasicFunction("log")
 elu = BasicFunction("elu")
 tanh = BasicFunction("tanh")
 sigmoid = BasicFunction("sigmoid")
 
 
+class LogFunction(BasicFunction):
+    def __init__(self):
+        super(LogFunction, self).__init__("log")
+
+    def __call__(self, x):
+        from vilab.api.model import Probability
+
+        if isinstance(x, Probability):
+            x.set_log_form(True)
+            return x
+        return super(LogFunction, self).__call__(x)
+
+log = LogFunction()
 
 

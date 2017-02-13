@@ -5,6 +5,7 @@ import tensorflow as tf
 import numpy as np
 from util import is_sequence
 ds = tf.contrib.distributions
+import numbers
 
 class DiracDeltaDistribution(ds.Distribution):
     def __init__(self, point, name="DiracDelta"):
@@ -41,18 +42,32 @@ class Engine(object):
     _debug_outputs = []
 
     @classmethod
-    def sample(cls, density, shape):
+    def sample(cls, density, shape, importance_samples):
         args = density.get_args()
+        
+        # shape = (shape[0]*importance_samples,) + shape[1:]    
+        
         if isinstance(density, N):
-            N0 = tf.random_normal(shape)
-            
+            assert len(shape) == 2, "Unexpected shape"
+
+            N0 = tf.random_normal((shape[0], importance_samples, shape[1]))
+
             mu = args[0]
             stddev = tf.exp(0.5 * args[1])
+            
+            mu = tf.reshape(mu, (shape[0], 1, shape[1]))
+            stddev = tf.reshape(stddev, (shape[0], 1, shape[1]))
             
             if isinstance(mu, tf.Tensor):
                 assert mu.get_shape() == stddev.get_shape(), "Shapes of deduced arguments for {} is not right".format(density)
             
-            return tf.add(mu, tf.mul(stddev, N0), name="sample_{}".format(density.get_name()))
+            res = tf.add(mu, tf.mul(stddev, N0), name="sample_{}".format(density.get_name()))
+            # return res
+            return tf.reshape(
+                res, 
+                (shape[0]*importance_samples, shape[1]), 
+                name="sample_{}".format(density.get_name())
+            )
         elif isinstance(density, B):
             U0 = tf.random_uniform(shape)
             sample = tf.less(U0, tf.nn.sigmoid(args[0]), name="sample_{}".format(density.get_name()))
@@ -87,40 +102,29 @@ class Engine(object):
 
 
     @classmethod
-    def likelihood(cls, density, data, logform=False):
+    def get_shape(cls, elem):
+        if isinstance(elem, tf.Tensor):
+            return elem.get_shape().as_list()
+        elif isinstance(elem, DiracDeltaDistribution):
+            return elem.point.get_shape().as_list()
+        elif isinstance(elem, ds.Normal):
+            return elem.mu.get_shape().as_list()
+        elif isinstance(elem, ds.Bernoulli):
+            return elem.logits.get_shape().as_list()
+        elif isinstance(elem, numbers.Integral) or isinstance(elem, numbers.Real):
+            return []
+        raise Exception("Unknown type: {}".format(elem))
+
+    @classmethod
+    def likelihood(cls, density, data):
         density_obj = cls.get_density(density)
-        # ret_sum = \
-        #     tf.reduce_sum(data * tf.log(1e-8 + density_obj.p)
-        #                    + (1-data) * tf.log(1e-5 + 1 - density_obj.p),
-        #                    1)
-
+        
         ret = density_obj._log_prob(data)
-        
-        # ret = tf.Print(ret, [ret], "LL")
-
-        # from datasets import load_toy_dataset
-        # from util import shm
-
-        # sess = cls.get_session()
-        # ret_v, base_v = sess.run([ret, base], 
-        #     feed_dict={
-        #         cls._debug_input_data["x"]: load_toy_dataset()[0],
-        #         cls._debug_input_data["Binomial"]: load_toy_dataset()[0]
-        #     })
-        
-
-        # shm(ret_v, base_v)
-
-
+    
         ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
         
         return ret_sum
-
-        # if logform:
-        #     return ret_sum
-        # else:
-        #     return tf.exp(ret_sum)
-        
+    
     @classmethod
     def get_session(cls):
         if cls.CURRENT_SESSION is None:
@@ -232,6 +236,11 @@ class Engine(object):
         use_weight_norm = kwargs.get("use_weight_norm", False)
         layers_num = kwargs.get("layers_num")
         reuse = kwargs.get("reuse", False)
+        use_batch_norm = kwargs.get("use_batch_norm", False)
+        if use_weight_norm:
+            use_bias = False
+        
+        epsilon = 1e-03
 
         if not is_sequence(size):
             size = (size,)
@@ -245,6 +254,8 @@ class Engine(object):
         act = None
         if user_act:
             act = Engine.get_basic_function(user_act)
+        
+        assert not act is None or use_weight_norm == False, "Can't use batch normalization with linear activation function"
 
         with tf.variable_scope(name, reuse=reuse) as scope:
             inputs = args
@@ -260,7 +271,9 @@ class Engine(object):
 
                     init = lambda shape, dtype, partition_info: xavier_init(nin, nout, const = weight_factor)
                     vec_init = lambda shape, dtype, partition_info: xavier_vec_init(nout, const = weight_factor)
-                    bias_init = lambda shape, dtype, partition_info: np.zeros((nout,))
+                    zeros_init = lambda shape, dtype, partition_info: np.zeros((nout,))
+                    ones_init = lambda shape, dtype, partition_info: np.ones((nout,))
+                    
                     if not use_weight_norm:
                         w = tf.get_variable("W{}-{}".format(l_id, idx), [nin, nout], dtype = tf.float32, initializer = init)
                         a_w = tf.matmul(a, w)
@@ -272,10 +285,21 @@ class Engine(object):
                         a_w = a_w * g/tf.sqrt(tf.reduce_sum(tf.square(V),[0]))
 
                     if use_bias:
-                        b = tf.get_variable("b{}-{}".format(l_id, idx), [nout], tf.float32, initializer = bias_init)
+                        b = tf.get_variable("b{}-{}".format(l_id, idx), [nout], tf.float32, initializer = zeros_init)
                         a_w = a_w + b
 
+
                     layer_out = layer_out + a_w
+                
+                if use_batch_norm:
+                    batch_mean, batch_var = tf.nn.moments(layer_out, [0])
+                    layer_out = (layer_out - batch_mean) / tf.sqrt(batch_var + epsilon)
+
+                    gamma = tf.get_variable("gamma{}".format(l_id), [nout], dtype = tf.float32, initializer = ones_init)
+                    beta = tf.get_variable("beta{}".format(l_id), [nout], dtype = tf.float32, initializer = zeros_init)
+                    
+                    layer_out = gamma * layer_out + beta
+
                 inputs = (act(layer_out) if act else layer_out,)
 
         return inputs[0]

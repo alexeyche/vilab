@@ -8,6 +8,11 @@ from vilab.calc import deduce, maximize, Monitor
 from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 
+setup_log(logging.INFO)
+
+
+# configuration
+
 Function.configure(
 	use_batch_norm = False,
 )
@@ -16,12 +21,13 @@ N.configure(
 	importance_samples = 1
 )
 
-setup_log(logging.INFO)
+# Task related definitions
 
 x, z = Variable("x"), Variable("z")
+
+# Definition of high level functions
+
 p, q = Model("p"), Model("q")
-
-
 
 mlp = Function("mlp", act=softplus)
 
@@ -29,10 +35,12 @@ mu = Function("mu", mlp)
 var = Function("var", mlp)
 logit = Function("logit", mlp)
 
+# Model definition
 
 q(z | x) == N(mu(x), var(x))
 p(x | z) == B(logit(z))
 
+# Target value
 
 LL = - KL(q(z | x), N0) + log(p(x | z))
 

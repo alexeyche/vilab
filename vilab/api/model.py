@@ -23,6 +23,14 @@ class Probability(object):
             ("" if not self._log_form_flag else ")")
         )
 
+    def get_context_name(self):
+        s = str(self)
+        return s \
+            .replace("(", "/") \
+            .replace(")", "/") \
+            .replace("|", "-") \
+            .replace(" ", "")
+
     def __repr__(self):
         return str(self)
 
@@ -31,15 +39,13 @@ class Probability(object):
 
         if isinstance(x, Density):
             logging.info("Describing variable {} with density {} in the context of {}".format(self._output, x, self._model))
-            self._output.set_density(x)
             self._output.set_model(self._model)
             self._model.save_description(self._output, self._dependencies, x)
             return True
         elif isinstance(x, FunctionResult):
             logging.info("Describing variable {} with function {} in the context of {}".format(self._output, x, self._model))
-            self._output.set_density(DiracDelta(x))
             self._output.set_model(self._model)
-            self._model.save_description(self._output, self._dependencies, x)
+            self._model.save_description(self._output, self._dependencies, DiracDelta(x))
             return True
         elif isinstance(x, Probability):
             return \
@@ -61,6 +67,17 @@ class Probability(object):
     def is_log_form(self):
         return self._log_form_flag
 
+    def get_density(self):
+        density = self._model.get_description(self._output, self._dependencies)
+        if not density is None:
+            return density
+        raise Exception("Failed to deduce density for {}".format(self))
+
+    def get_output(self):
+        return self._output
+
+
+
 class Model(object):
     def __init__(self, name):
         self._name = name
@@ -75,6 +92,14 @@ class Model(object):
     def get_name(self):
         return self._name
 
+    def get_description(self, var, deps):
+        key = (var, deps)
+        return self._descriptions.get(key)
+
+    def get_var_probabilities(self, var):
+        return tuple([ (Probability(self, var, k[1]), v)  for k, v in self._descriptions.iteritems() if k[0] == var ])
+
+
     def save_description(self, var, deps, density):
         key = (var, deps)
         assert not key in self._descriptions, \
@@ -86,8 +111,6 @@ class Model(object):
 
     def __call__(self, *args):
         v = args[0]
-        assert v.get_model() is None or v.get_model() == self, \
-            "Trying to describe variable {} that was already described by model {}".format(v, v.get_model())
         assert isinstance(v, Variable), "Expecting variables as input to model"
 
         if len(args) > 1:

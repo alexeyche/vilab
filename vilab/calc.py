@@ -21,14 +21,14 @@ class DensityView(object):
 
 
 class Parser(object):
-    Ctx = namedtuple("Ctx", ["output", "requested_shape", "model", "dependencies", "density_view"])
+    Ctx = namedtuple("Ctx", ["output", "requested_shape", "probability", "dependencies", "density_view"])
 
     @staticmethod
-    def get_ctx_with(ctx, output=None, requested_shape=None, model=None, dependencies=None, density_view=None):
+    def get_ctx_with(ctx, output=None, requested_shape=None, probability=None, dependencies=None, density_view=None):
         return Parser.Ctx(
             ctx.output if output is None else output,
             ctx.requested_shape if requested_shape is None else requested_shape,
-            ctx.model if model is None else model,
+            ctx.probability if probability is None else probability,
             ctx.dependencies if dependencies is None else dependencies,
             ctx.density_view if density_view is None else density_view
         )
@@ -38,7 +38,11 @@ class Parser(object):
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
-        self.default_ctx = Parser.Ctx(output, None, model, None, DensityView.SAMPLE)
+        probability = None
+        if model:
+            assert isinstance(output, Variable), "Setting model in context is only for variable deduce, got {}".format(output)
+            probability = Probability(model, output, tuple())
+        self.default_ctx = Parser.Ctx(output, None, probability, None, DensityView.SAMPLE)
 
         self.variable_set = set()
         self.visited = {}
@@ -69,9 +73,9 @@ class Parser(object):
     def get_visited_value(self, elem, ctx):
         key = (elem, ctx.density_view)
         if key in self.visited and not elem in self.feed_dict:
-            logging.debug("CACHE: Element {} is already visited. Returning {} and ignoring ...".format(key, self.visited[key]))
+            logging.debug("CACHE HIT: Element {} is already visited. Returning {} and ignoring ...".format(key, self.visited[key]))
             return self.visited[key]
-        logging.debug("{} is not found, calculating".format(key))
+        # logging.debug(": {} is not found, calculating".format(key))
         return None
 
     def update_visited_value(self, elem, ctx, value):
@@ -128,7 +132,7 @@ class Parser(object):
             Parser.Ctx(
                 output, 
                 ctx.requested_shape,
-                model,
+                prob,
                 dependencies,
                 density_view
             )
@@ -217,21 +221,46 @@ class Parser(object):
                 self.variable_set.remove(elem)
             return provided_input
         else:
-            elem_model = elem.get_model()
+            if ctx.probability is None: # trying to deduce things for just variable
+                logging.debug("Found no probability in context, trying to do our best ...")
+                elem_models = elem.get_models()
+                assert len(elem_models) > 0, "Variable {} is not described by any probability density, can't deduce".format(elem)
+                assert len(elem_models) == 1, "Variable {} is described by many probability densities, need to define proper context".format(elem)
+                elem_model = elem_models[0]
+                
+                dst_probs_and_dens = elem_model.get_var_probabilities(elem)
+                assert len(dst_probs_and_dens) > 0, "Couldn't find any description of variable {}".format(elem)
+                assert len(dst_probs_and_dens) == 1, "Need one description, FIX ME"
+                probability, dst_density = dst_probs_and_dens[0]
+            else:
+                if ctx.probability.get_output() != elem:
+                    logging.debug("Got variable jumping case {} -> {}".format(ctx.probability.get_output(), elem))
+                    models = elem.get_models()
+                    assert len(models) == 1, "Need one model, FIX ME" 
+                    elem_model = models[0]
+
+                    dst_probs_and_dens = elem_model.get_var_probabilities(elem)
+                    assert len(dst_probs_and_dens) == 1, "Need one description, FIX ME"
+                    probability, dst_density = dst_probs_and_dens[0]
+                else:
+                    probability = ctx.probability
+                    dst_density = ctx.probability.get_density()
+
+            elem_model, _, deps = probability.get_components()
+            
             elem_structure = self.structure.get(elem)
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
-            deps = elem.get_dependencies()
             
-            logging.debug("Deducer({}): deducing density {}".format(elem, elem.get_density()))
+            logging.debug("Deducer({}): deducing density {}".format(elem, dst_density))
             
             logging.info("Deducing variable {}".format(elem.get_name()))
             result = self.deduce(
-                elem.get_density(), 
+                dst_density, 
                 Parser.get_ctx_with(
                     ctx, 
                     requested_shape=elem_structure, 
-                    model=elem_model, 
-                    density_view=DensityView.SAMPLE if ctx.model != elem_model else ctx.density_view,
+                    probability=probability, 
+                    density_view=ctx.density_view,
                     dependencies = deps
                 )
             )
@@ -253,10 +282,14 @@ class Parser(object):
             elem_structure = self.structure.get(elem.get_fun(), ctx.requested_shape)
             
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
-            assert not ctx.model is None, "Need to specify context model for {} calculation".format(elem)
+            
+            context_name = ""
+            if not ctx.probability is None:
+                context_name = ctx.probability.get_context_name()
 
-            logging.info("Calling function {}/{} with structure {}, act: {}, arguments: {}".format(
-                ctx.model.get_name(), elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
+
+            logging.info("Calling function {}{} with structure {}, act: {}, arguments: {}".format(
+                context_name, elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
             ))
             
             cfg = elem.get_fun().get_config()
@@ -264,7 +297,7 @@ class Parser(object):
             return Engine.function(
                 *deduced_args, 
                 size = elem_structure, 
-                name = "{}/{}".format(ctx.model.get_name(), elem.get_name()),
+                name = "{}{}".format(context_name, elem.get_name()),
                 act = elem.get_act(),
                 reuse = self.reuse,
                 weight_factor = cfg.weight_factor,

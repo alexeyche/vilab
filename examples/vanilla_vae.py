@@ -31,8 +31,7 @@ p, q = Model("p"), Model("q")
 
 mlp = Function("mlp", act=softplus)
 
-mu = Function("mu", mlp)
-var = Function("var", mlp)
+mu, var = Function("mu", mlp), Function("var", mlp)
 logit = Function("logit", mlp)
 
 # Model definition
@@ -87,9 +86,9 @@ shl(
 
 m = deduce(
 	mu(x), 
-	model=q,
+	context=log(p(x | z)),
 	feed_dict={x: x_test[:5000,:]}, 
-	structure={mlp: (200, 200), mu: 2}, 
+	structure={mlp: (200, 200), z: 2, logit: ndim}, 
 	reuse=True
 )
 

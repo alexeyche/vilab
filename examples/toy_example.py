@@ -15,8 +15,7 @@ p, q = Model("p"), Model("q")
 
 mlp = Function("mlp", act=softplus)
 
-mu = Function("mu", mlp)
-var = Function("var", mlp)
+mu, var = Function("mu", mlp), Function("var", mlp)
 logit = Function("logit", mlp)
 
 
@@ -54,11 +53,27 @@ out, mon_out = maximize(
 	batch_size=batch_size,
 	monitor=Monitor(
 		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
-		freq=500,
+		freq=100,
 		callback=monitor_callback
 	)
 )
 
+
+x_logit = deduce(
+	logit(z), 
+	context=log(p(x | z)),
+	feed_dict={x: x_train}, 
+	structure=structure, 
+	reuse=True
+)
+
+z_mu_embed = deduce(
+	mu(x), 
+	context=log(p(x | z)),
+	feed_dict={x: x_train}, 
+	structure=structure, 
+	reuse=True
+)
 
 shl(
 	mon_out[:,2],
@@ -69,10 +84,5 @@ shl(
 	file = env.run("result.png")
 )
 
-x_logit = deduce(
-	logit(z), 
-	model=p,
-	feed_dict={x: x_train}, 
-	structure=structure, 
-	reuse=True
-)
+shm(np.clip(x_logit, 0.0, 1.0))
+shs(z_mu_embed, labels=x_classes)

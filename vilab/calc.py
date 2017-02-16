@@ -33,15 +33,17 @@ class Parser(object):
             ctx.density_view if density_view is None else density_view
         )
 
-    def __init__(self, output, feed_dict, structure, batch_size, reuse=False, model=None):
+    def __init__(self, output, feed_dict, structure, batch_size, reuse=False, context=None):
         self.feed_dict = feed_dict
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
         probability = None
-        if model:
-            assert isinstance(output, Variable), "Setting model in context is only for variable deduce, got {}".format(output)
-            probability = Probability(model, output, tuple())
+        if context:
+            if isinstance(context, Probability):
+                probability = context
+            else:
+                raise Exception("Unsupported type of context: {}".format(context))
         self.default_ctx = Parser.Ctx(output, None, probability, None, DensityView.SAMPLE)
 
         self.variable_set = set()
@@ -386,7 +388,7 @@ def _run(leaves_to_run, feed_dict, batch_size, engine_inputs):
 
     return outputs  
 
-def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silent=False, model=None):    
+def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silent=False, context=None):    
     log_level = logging.getLogger().level
     if silent:
         setup_log(logging.CRITICAL)        
@@ -406,7 +408,12 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silen
     if is_sequence(elem):
         top_elem = elem[0]
     
-    parser = Parser(top_elem, feed_dict, structure, batch_size, reuse, model)
+    if context:
+        parser = Parser(context, feed_dict, structure, batch_size, reuse)
+        parser.deduce(context)
+    else:
+        parser = Parser(top_elem, feed_dict, structure, batch_size, reuse)
+        
     if is_sequence(elem):
         for subelem in elem:
             results.append(parser.deduce(subelem))

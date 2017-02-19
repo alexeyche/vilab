@@ -1,7 +1,6 @@
 
 import logging
 
-from density import *
 
 class Variable(object):
     REGISTER = set()
@@ -38,13 +37,24 @@ class Variable(object):
         return hash(self._name)
 
     def __eq__(self, x):
+        from density import Density
+        from function import FunctionResult
+        from model import Model
+
         if isinstance(x, Variable):
             return self.get_name() == x.get_name()
+        elif isinstance(x, Density) or isinstance(x, FunctionResult):
+            p_tmp = Model(self.get_name())
+            return p_tmp(self | None) == x  # unknown dependencies
         else:
             raise Exception("Comparing with the strange type: {}".format(x))
 
     def __cmp__(self, x):
+        assert isinstance(x, Variable)
         if self == x:
             return 0
-        return -1
+        return -1 if self.get_name() < x.get_name() else 1
 
+    def get_scope_name(self):
+        n = self.get_name()
+        return n.replace("[", "_").replace("]", "")

@@ -6,15 +6,16 @@ from vilab.api import *
 from vilab.util import *
 from vilab.calc import deduce, maximize, Monitor
 from vilab.env import Env
+from vilab.datasets import load_mnist_realval
 
-setup_log(logging.INFO)
+setup_log(logging.DEBUG)
 
 # Task related definitions
 
 h_seq, x_seq, z_seq = Sequence("h"), Sequence("x"), Sequence("z")
 t = Index("t")
 
-h, x, z = h_seq[t-1], x_seq[t], z_seq[t]    # previous state, current data, current latent data (will be generated)
+h_new, h, x, z = h_seq[t], h_seq[t-1], x_seq[t], z_seq[t]    # previous state, current data, current latent data (will be generated)
 
 # Definition of high level functions
 
@@ -29,12 +30,29 @@ f = Function("f")
 # Model definition
 
 p(z) == N(mu(h), var(h))
-q(z | x, h) == N(mu(x, h), var(x, h))
-p(x | z, h) == B(logit(z))
+q(z | h, x) == N(mu(x, h), var(x, h))
+p(x | h, z) == B(logit(z))
 
-h[t] == f(x, z, h)
+h_new == f(x, z, h)
 
 # Target value
 
-LL = - KL(q(z | x, h), p(z)) + log(p(x | z))
 
+LL = - KL(q(z | x, h), p(z)) + log(p(x | z, h))
+
+ 
+x_train = np.random.randn(20, 10)
+ndim = x_train.shape[1]
+
+h_o = deduce(
+	LL,
+	feed_dict={
+		x: x_train,
+		h: np.zeros((20, 2))
+	},
+	structure={
+		mlp: (200, 200,),
+		z: 2,
+		h_new: 3
+	}
+)

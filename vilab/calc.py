@@ -21,11 +21,12 @@ class DensityView(object):
 
 
 class Parser(object):
-    Ctx = namedtuple("Ctx", ["output", "requested_shape", "probability", "dependencies", "density_view"])
+    Ctx = namedtuple("Ctx", ["statement_id", "output", "requested_shape", "probability", "dependencies", "density_view"])
 
     @staticmethod
-    def get_ctx_with(ctx, output=None, requested_shape=None, probability=None, dependencies=None, density_view=None):
+    def get_ctx_with(ctx, statement_id=None, output=None, requested_shape=None, probability=None, dependencies=None, density_view=None):
         return Parser.Ctx(
+            ctx.statement_id if statement_id is None else statement_id,
             ctx.output if output is None else output,
             ctx.requested_shape if requested_shape is None else requested_shape,
             ctx.probability if probability is None else probability,
@@ -44,9 +45,11 @@ class Parser(object):
                 probability = context
             else:
                 raise Exception("Unsupported type of context: {}".format(context))
-        self.default_ctx = Parser.Ctx(output, None, probability, None, DensityView.SAMPLE)
+        self.default_ctx = Parser.Ctx(None, output, None, probability, None, DensityView.SAMPLE)
 
         self.variable_set = set()
+        self.statements_met = set()
+        
         self.visited = {}
         self.engine_inputs = {}
         
@@ -73,6 +76,8 @@ class Parser(object):
         return self.default_ctx
 
     def get_visited_value(self, elem, ctx):
+        if isinstance(elem, Variable):
+            return None
         key = (elem, ctx.density_view)
         if key in self.visited and not elem in self.feed_dict:
             logging.debug("CACHE HIT: Element {} is already visited. Returning {} and ignoring ...".format(key, self.visited[key]))
@@ -81,6 +86,8 @@ class Parser(object):
         return None
 
     def update_visited_value(self, elem, ctx, value):
+        if isinstance(elem, Variable):
+            return
         key = (elem, ctx.density_view)
         if not key in self.visited:
             self.visited[key] = value
@@ -132,6 +139,7 @@ class Parser(object):
         return self.deduce(
             output, 
             Parser.Ctx(
+                ctx.statement_id,
                 output, 
                 ctx.requested_shape,
                 prob,
@@ -144,6 +152,10 @@ class Parser(object):
     def density(self, elem, ctx):
         cfg = elem.get_config()
 
+        probability_with_deps = None
+        if not ctx.probability is None and ctx.probability.get_dependencies() is None:
+            probability_with_deps = self.deduce_dependencies_for_probability(elem, ctx.probability)
+
         logging.debug("Deducer({}): deducing for density".format(elem))
         dst_elem = copy.copy(elem)
         logging.debug("Deducer({}): Deducing arguments ...".format(elem))
@@ -152,8 +164,10 @@ class Parser(object):
                 arg, 
                 Parser.get_ctx_with(
                     ctx, 
-                    density_view=DensityView.SAMPLE)
-                ) 
+                    density_view=DensityView.SAMPLE,
+                    dependencies=ctx.dependencies if probability_with_deps is None else probability_with_deps.get_dependencies(),
+                    probability=ctx.probability if probability_with_deps is None else probability_with_deps
+                ))
             for arg in elem.get_args()
         ])
         logging.debug("Deducer({}): Done".format(elem))
@@ -190,12 +204,6 @@ class Parser(object):
     def variable(self, elem, ctx):
         logging.debug("Deducer({}): deducing for variable".format(elem))
 
-        trivial_deduce = not ctx.output is None and \
-                         isinstance(ctx.output, Variable) and \
-                         elem == ctx.output and \
-                         elem in self.feed_dict and \
-                         not elem in self.variable_set
-        
         recursion = elem in self.variable_set
         if recursion:
             if not elem in self.feed_dict:
@@ -204,79 +212,143 @@ class Parser(object):
                 logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
         else:
             self.variable_set.add(elem)
+
+        next_statement_id, next_density, next_probability = None, None, None
+
+        if ctx.probability is None or elem != ctx.probability.get_output():
+            candidates = []
+
+            for m in elem.get_models():
+                for statement_id, density, probability in m.get_var_probabilities(elem):
+                    min_global_statement = ctx.statement_id is None or statement_id < ctx.statement_id  # intersected with current statement id
+                    
+                    if min_global_statement:
+                        candidates.append((statement_id, density, probability))
+
+            if len(candidates) == 1:
+                logging.debug("Got 1 candidate {} to describe {}. Easy choice".format(candidates[0], elem))
+                next_statement_id, next_density, next_probability = candidates[0]
+            
+            elif len(candidates) > 1:
+                logging.debug("Got {} candidates to describe variable {}, need to choose ...".format(len(candidates), elem))
+                assert not ctx.probability is None, "Got too many descriptions of variable {}: {}; failing to choose one of them (need more context)" \
+                    .format(elem, ", ".join([str(c[2]) for c in candidates]))
+
+                if not ctx.probability.get_dependencies() is None: 
+                    deps = set([d for d in ctx.probability.get_dependencies() if d != elem])
+                    if len(deps) == 0:
+                        logging.debug("Looking for description that is unconditioned")
+
+                        candidates = [ (c_st, c_dens, c_prob) for c_st, c_dens, c_prob in candidates if len(c_prob.get_dependencies()) == 0]
+                        
+                        assert len(candidates) > 0, "Failed to find any description of {} which includes unconditioned dependency".format(elem)
+                        assert len(candidates) == 1, "Got too many descriptions of variable {} which includes unconditioned dependency".format(elem)                    
+                    else:
+                        logging.debug("Looking for description that has {} as subset".format(deps))
+                        
+                        candidates = [ (c_st, c_dens, c_prob) for c_st, c_dens, c_prob in candidates if deps <= set(c_prob.get_dependencies())]
+                    
+                        assert len(candidates) > 0, "Failed to find any description of {} which has dependencies that includes {}".format(elem, deps)
+                        assert len(candidates) == 1, "Got too many descriptions of variable {} which has dependencies that includes {}".format(elem, deps)
+                else:
+                    logging.debug("Got variable with unknown dependencies")
+
+                    raise Exception()
+
+                logging.debug("Found this one: {}".format(candidates[0][2]))
+                
+                next_statement_id, next_density, next_probability = candidates[0]
+        else:
+            for m in elem.get_models():
+                for statement_id, density, probability in m.get_var_probabilities(elem):
+                    if ctx.probability == probability:
+                        assert next_statement_id is None, "Got duplicated probability"
+                        next_statement_id, next_density, next_probability = statement_id, density, probability
+
+            assert not next_statement_id is None, "Failed to find how variable {} is described by probability {}".format(elem, probability)
         
-        
-        if trivial_deduce:
-            logging.debug("Found output variable {} in inputs, considering this as trivial deduce, will proceed graph calculation".format(elem))
-        
-        assert ctx.output == elem or ctx.dependencies is None or elem in ctx.dependencies, \
-            "Deducer met variable {} that wasn't specified as dependent variable".format(elem) 
-        
-        if elem in self.feed_dict and not trivial_deduce:
+        assert not next_statement_id is None or elem in self.feed_dict, "Failed to deduce variable {}, need to provide data for variable".format(elem)
+
+        if next_statement_id is None and elem in self.feed_dict:
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
         
             data = self.feed_dict[elem]
-            provided_input = Engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
+            provided_input = Engine.provide_input(elem.get_scope_name(), (self.batch_size, ) + data.shape[1:])
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
             self.engine_inputs[provided_input] = elem
             if not recursion:
                 self.variable_set.remove(elem)
             return provided_input
         else:
-            if ctx.probability is None: # trying to deduce things for just variable
-                logging.debug("Found no probability in context, trying to do our best ...")
-                elem_models = elem.get_models()
-                assert len(elem_models) > 0, "Variable {} is not described by any probability density, can't deduce".format(elem)
-                assert len(elem_models) == 1, "Variable {} is described by many probability densities, need to define proper context".format(elem)
-                elem_model = elem_models[0]
-                
-                dst_probs_and_dens = elem_model.get_var_probabilities(elem)
-                assert len(dst_probs_and_dens) > 0, "Couldn't find any description of variable {}".format(elem)
-                assert len(dst_probs_and_dens) == 1, "Need one description, FIX ME"
-                probability, dst_density = dst_probs_and_dens[0]
-            else:
-                if ctx.probability.get_output() != elem:
-                    logging.debug("Got variable jumping case {} -> {}".format(ctx.probability.get_output(), elem))
-                    models = elem.get_models()
-                    assert len(models) == 1, "Need one model, FIX ME" 
-                    elem_model = models[0]
+            cache_key = (elem, next_probability, ctx.density_view, next_statement_id)
+            if cache_key in self.visited:
+                logging.debug("CACHE HIT, Variable {}, stat.id #{}: ".format(elem, next_statement_id))
+                return self.visited[cache_key]
 
-                    dst_probs_and_dens = elem_model.get_var_probabilities(elem)
-                    assert len(dst_probs_and_dens) == 1, "Need one description, FIX ME"
-                    probability, dst_density = dst_probs_and_dens[0]
-                else:
-                    probability = ctx.probability
-                    dst_density = ctx.probability.get_density()
-
-            elem_model, _, deps = probability.get_components()
+            elem_model, _, deps = next_probability.get_components()
             
             elem_structure = self.structure.get(elem)
             assert not elem_structure is None, "Need to provide structure information for {}".format(elem)
             
-            logging.debug("Deducer({}): deducing density {}".format(elem, dst_density))
+            logging.debug("Deducer({}): deducing density {}".format(elem, next_density))
             
-            logging.info("Deducing variable {}".format(elem.get_name()))
+            logging.info("Deducing variable {}, statement #{}".format(elem.get_name(), next_statement_id))
             result = self.deduce(
-                dst_density, 
+                next_density, 
                 Parser.get_ctx_with(
-                    ctx, 
+                    ctx,
+                    statement_id=next_statement_id,
+                    output=next_probability.get_output(),
                     requested_shape=elem_structure, 
-                    probability=probability, 
+                    probability=next_probability, 
                     density_view=ctx.density_view,
                     dependencies = deps
                 )
             )
             
+            self.visited[cache_key] = result
+
             if not recursion:
                 self.variable_set.remove(elem)
             return result
+
+    def get_variables(self, elem):
+        vars_met = set()
+        if isinstance(elem, Variable):
+            vars_met.add(elem)
+        elif isinstance(elem, FunctionResult) or isinstance(elem, Density):
+            for v in elem.get_args():
+                vars_met |= self.get_variables(v)
+        else:
+            raise Exception("Failed to find variables in branch, unknown type: {}".format(elem))
+        return vars_met
+
+    def deduce_dependencies_for_probability(self, elem, prob):
+        logging.debug("Got unknown dependencies, need to try to collect this information ...")
+        var_deps = set()
+        for a in elem.get_args():
+            var_deps |= self.get_variables(a)
+        
+        logging.debug("For the function {} collected dependencies: {}".format(elem, var_deps))
+        return Probability(prob.get_model(), prob.get_output(), var_deps)
 
 
     def function_result(self, elem, ctx):
         logging.debug("Deducer({}): deducing for function result".format(elem))
         
+        probability_with_deps = None
+        if not ctx.probability is None and ctx.probability.get_dependencies() is None:
+            probability_with_deps = self.deduce_dependencies_for_probability(elem, ctx.probability)
+
         deduced_args = [
-            self.deduce(arg, Parser.get_ctx_with(ctx, density_view=DensityView.SAMPLE))
+            self.deduce(
+                arg, 
+                Parser.get_ctx_with(
+                    ctx, 
+                    density_view=DensityView.SAMPLE,
+                    dependencies=ctx.dependencies if probability_with_deps is None else probability_with_deps.get_dependencies(),
+                    probability=ctx.probability if probability_with_deps is None else probability_with_deps
+                ))
             for arg in elem.get_args()
         ]
 
@@ -289,9 +361,8 @@ class Parser(object):
             if not ctx.probability is None:
                 context_name = ctx.probability.get_context_name()
 
-
             logging.info("Calling function {}{} with structure {}, act: {}, arguments: {}".format(
-                context_name, elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
+                "" if ctx.probability is None else str(ctx.probability) + "/", elem.get_name(), elem_structure, elem.get_act().get_name() if elem.get_act() else "linear", ",".join([str(a.get_name()) for a in elem.get_args()])
             ))
             
             cfg = elem.get_fun().get_config()

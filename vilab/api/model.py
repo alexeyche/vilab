@@ -10,16 +10,18 @@ from vilab.api.density import Density, Unknown, DiracDelta
 class Probability(object):
     def __init__(self, model, output, dependencies):
         self._output = output
-        self._dependencies = dependencies
+        self._dependencies = None if dependencies is None else tuple(sorted(dependencies))
         self._model = model
         self._log_form_flag = False
 
     def __str__(self):
-        return "{}{}({} | {}){}".format(
+        deps = [] if self._dependencies is None else self._dependencies
+        return "{}{}({}{}{}){}".format(
             ("" if not self._log_form_flag else "log("),
             self._model.get_name(), 
             self._output.get_name(), 
-            ",".join([d.get_name() for d in self._dependencies]),
+            "" if len(deps) == 0 else " | ",
+            ", ".join([d.get_name() for d in deps]),
             ("" if not self._log_form_flag else ")")
         )
 
@@ -28,8 +30,11 @@ class Probability(object):
         return s \
             .replace("(", "/") \
             .replace(")", "/") \
-            .replace("|", "-") \
-            .replace(" ", "")
+            .replace("|", "_") \
+            .replace(" ", "") \
+            .replace(",", "_") \
+            .replace("[", "") \
+            .replace("]", "")
 
     def __repr__(self):
         return str(self)
@@ -50,8 +55,8 @@ class Probability(object):
         elif isinstance(x, Probability):
             return \
                 self._output == x._output and \
-                self._dependencies == self._dependencies and \
-                self._model == self._model
+                self._dependencies == x._dependencies and \
+                self._model == x._model
         else:
             raise Exception("Comparing with the strange type: {}".format(x))
 
@@ -67,8 +72,11 @@ class Probability(object):
     def is_log_form(self):
         return self._log_form_flag
 
+    def get_dependencies(self):
+        return self._dependencies
+
     def get_density(self):
-        density = self._model.get_description(self._output, self._dependencies)
+        statement_id, density = self._model.get_description(self._output, self._dependencies)
         if not density is None:
             return density
         raise Exception("Failed to deduce density for {}".format(self))
@@ -76,9 +84,18 @@ class Probability(object):
     def get_output(self):
         return self._output
 
+    def get_model(self):
+        return self._model
+
+    def __hash__(self):
+        return hash((self._model, self._output, self._dependencies))
+
+
 
 
 class Model(object):
+    STATEMENTS_NUM = 0
+
     def __init__(self, name):
         self._name = name
         self._descriptions = {}
@@ -97,14 +114,16 @@ class Model(object):
         return self._descriptions.get(key)
 
     def get_var_probabilities(self, var):
-        return tuple([ (Probability(self, var, k[1]), v)  for k, v in self._descriptions.iteritems() if k[0] == var ])
+        return tuple([ (v[0], v[1], Probability(self, var, k[1]))  for k, v in self._descriptions.iteritems() if k[0] == var ])
 
 
     def save_description(self, var, deps, density):
-        key = (var, deps)
+        key, val = (var, deps), (Model.STATEMENTS_NUM, density)
         assert not key in self._descriptions, \
             "Trying to redefine variable {} conditioned on dependencies {} with density {}".format(var, deps, density)
-        self._descriptions[key] = density
+        self._descriptions[key] = val
+        
+        Model.STATEMENTS_NUM += 1
 
     def has_description(self, var, deps):
         return (var, deps) in self._descriptions
@@ -120,7 +139,9 @@ class Model(object):
                 assert isinstance(a, Variable), "Expecting variables as input to model"
                 assert len(a._requested_dependencies) == 0, "Conditions for first variables are supported for now"
 
-            dependencies = tuple(v._requested_dependencies + list(args[1:]))
+            unknown = len(v._requested_dependencies) == 1 and v._requested_dependencies[0] is None
+            
+            dependencies = tuple(v._requested_dependencies + list(args[1:])) if not unknown else None
             v._requested_dependencies = list()
             v._dependencies = dependencies
             
@@ -129,7 +150,9 @@ class Model(object):
         else:
             dependencies = tuple()
             if len(v._requested_dependencies) > 0:
-                dependencies = tuple(v._requested_dependencies)
+                unknown = len(v._requested_dependencies) == 1 and v._requested_dependencies[0] is None
+            
+                dependencies = tuple(v._requested_dependencies) if not unknown else None
 
                 v._requested_dependencies = list()
                 v._dependencies = dependencies

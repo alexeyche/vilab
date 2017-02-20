@@ -4,7 +4,7 @@ import logging
 from vilab.log import setup_log
 from vilab.api import *
 from vilab.util import *
-from vilab.calc import deduce, maximize, Monitor
+from vilab.deduce import deduce, maximize, Monitor
 from vilab.env import Env
 from vilab.datasets import load_mnist_realval
 
@@ -37,8 +37,8 @@ h_new == f(x, z, h)
 
 # Target value
 
-
-LL = - KL(q(z | x, h), p(z)) + log(p(x | z, h))
+LL_t = - KL(q(z | h, x), p(z)) + log(p(x | h, z))
+LL = Summation(LL_t)
 
  
 x_train = np.random.randn(20, 10)

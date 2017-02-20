@@ -1,11 +1,14 @@
 
 
-from api import *
+from vilab.api import *
 import tensorflow as tf
 import numpy as np
-from util import is_sequence
+from vilab.util import is_sequence
 ds = tf.contrib.distributions
 import numbers
+from tensorflow.python.ops import rnn_cell as rc
+
+from engine import Engine
 
 class DiracDeltaDistribution(ds.Distribution):
     def __init__(self, point, name="DiracDelta"):
@@ -34,15 +37,16 @@ def xavier_vec_init(fan_in, const=1.0):
     return tf.random_uniform((fan_in,), minval=low, maxval=high)
 
 
-class Engine(object):
-    CURRENT_SESSION = None
-    INITIALIZED = False
+class TfEngine(Engine):
     
-    _debug_input_data = {}
-    _debug_outputs = []
+    def __init__(self):
+        self.CURRENT_SESSION = None
+        self.INITIALIZED = False
+    
+        self._debug_input_data = {}
+        self._debug_outputs = []
 
-    @classmethod
-    def sample(cls, density, shape, importance_samples):
+    def sample(self, density, shape, importance_samples):
         args = density.get_args()
         
         # shape = (shape[0]*importance_samples,) + shape[1:]    
@@ -77,9 +81,8 @@ class Engine(object):
         else:
             raise Exception("Failed to sample {}".format(density))
 
-
-    @classmethod
-    def get_density(cls, density):
+    
+    def get_density(self, density):
         args = density.get_args()
         if isinstance(density, N):
             mu = args[0]
@@ -100,9 +103,8 @@ class Engine(object):
         else:
             raise Exception("Failed to get density object: {}".format(density))
 
-
-    @classmethod
-    def get_shape(cls, elem):
+    
+    def get_shape(self, elem):
         if isinstance(elem, tf.Tensor):
             return elem.get_shape().as_list()
         elif isinstance(elem, DiracDeltaDistribution):
@@ -115,41 +117,37 @@ class Engine(object):
             return []
         raise Exception("Unknown type: {}".format(elem))
 
-    @classmethod
-    def likelihood(cls, density, data):
-        density_obj = cls.get_density(density)
+    
+    def likelihood(self, density, data):
+        density_obj = self.get_density(density)
         
         ret = density_obj._log_prob(data)
     
         ret_sum = tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)
         
         return ret_sum
-    
-    @classmethod
-    def get_session(cls):
-        if cls.CURRENT_SESSION is None:
-            cls.open_session()
-        return cls.CURRENT_SESSION
+        
+    def get_session(self):
+        if self.CURRENT_SESSION is None:
+            self.open_session()
+        return self.CURRENT_SESSION
 
-    @classmethod
-    def open_session(cls):
+    def open_session(self):
         sess = tf.Session()
-        cls.CURRENT_SESSION = sess
+        self.CURRENT_SESSION = sess
         return sess
 
 
-    @classmethod
-    def run(cls, *args, **kwargs):
-        sess = cls.get_session()
-        if not cls.INITIALIZED:
+    def run(self, *args, **kwargs):
+        sess = self.get_session()
+        if not self.INITIALIZED:
             sess.run(tf.global_variables_initializer())
-            cls.INITIALIZED = True
+            self.INITIALIZED = True
 
         return sess.run(*args, **kwargs)
 
-
-    @classmethod
-    def get_optimizer(cls, optimizer, learning_rate):
+    
+    def get_optimizer(self, optimizer, learning_rate):
         if optimizer == Optimizer.ADAM:
             return tf.train.AdamOptimizer(learning_rate=learning_rate)
         elif optimizer == Optimizer.SGD:
@@ -157,9 +155,9 @@ class Engine(object):
         else:
             raise Exception("Unsupported optimizer: {}".format(optimizer))
 
-    @classmethod
-    def optimization_output(cls, value, optimizer, learning_rate):
-        optimizer_tf = cls.get_optimizer(optimizer, learning_rate)
+    
+    def optimization_output(self, value, optimizer, learning_rate):
+        optimizer_tf = self.get_optimizer(optimizer, learning_rate)
         
         tvars = tf.trainable_variables()
         grads = tf.gradients(-tf.reduce_mean(value), tvars)
@@ -169,15 +167,13 @@ class Engine(object):
 
         return apply_grads
 
-    @classmethod
-    def provide_input(cls, var_name, shape):
+    
+    def provide_input(self, var_name, shape):
         inp = tf.placeholder(tf.float32, shape=shape, name="input_{}".format(var_name))
-        cls._debug_input_data[var_name] = inp
+        self._debug_input_data[var_name] = inp
         return inp
 
-
-    @classmethod
-    def get_basic_function(cls, bf):
+    def get_basic_function(self, bf):
         if bf == linear:
             return None
         elif bf == log:
@@ -206,17 +202,8 @@ class Engine(object):
             return tf.neg
         else:
             raise Exception("Unsupported basic function: {}".format(bf))
-
-    @classmethod
-    def calc_basic_function(cls, bf, *args):
-        deduced_bf = cls.get_basic_function(bf)
-        if deduced_bf is None:
-            assert len(args) == 1, "Calling empty basic function {} with list of arguments: {}".format(bf, args)
-            return args[0]
-        return deduced_bf(*args)
-
-    @staticmethod
-    def function(*args, **kwargs):
+    
+    def function(self, *args, **kwargs):
         assert 'size' in kwargs, "Need size information"
         assert 'name' in kwargs, "Need name for output"
 
@@ -253,7 +240,7 @@ class Engine(object):
 
         act = None
         if user_act:
-            act = Engine.get_basic_function(user_act)
+            act = self.get_basic_function(user_act)
         
         assert not act is None or use_weight_norm == False, "Can't use batch normalization with linear activation function"
 
@@ -306,8 +293,8 @@ class Engine(object):
 
 
 
-    @classmethod
-    def calculate_metrics(cls, metrics, *args):
+    
+    def calculate_metrics(self, metrics, *args):
         if isinstance(metrics, KL):
             assert len(args) == 2, "Need two arguments for KL metric"
             assert isinstance(args[0], ds.Distribution), "Need argument to KL be distribution object, got {}".format(args[0])
@@ -334,10 +321,10 @@ class Engine(object):
             # from datasets import load_mnist_binarized_small
             # from util import shm
 
-            # sess = cls.get_session()
+            # sess = self.get_session()
 
             # ret_v, f_mu, f_var, s_mu, s_var, ret_sum_v = sess.run([ret, args[0].mu, args[0].sigma, args[1].mu, args[1].sigma, ret_sum], 
-            #     feed_dict={cls._debug_input_data["x"]: load_mnist_binarized_small()[0][:100]})
+            #     feed_dict={self._debug_input_data["x"]: load_mnist_binarized_small()[0][:100]})
             
 
             # shm(ret_v, f_mu, f_var)
@@ -363,5 +350,24 @@ class Engine(object):
             return tf.reduce_sum(ret, ret.get_shape().ndims-1, keep_dims=True)/2.0
         else:
             raise Exception("Met unknown metrics: {}".format(metrics))
+
+
+    
+    def iterate_over_sequence(self, callback):
+        pass
+
+
+class ArbitraryRNNCell(rc.RNNCell):
+    def __init__(self, calc_callback, output_size_callback): #, base_cell = rc.BasicRNNCell):
+        self.calc_callback = calc_callback
+        self.output_size_callback = output_size_callback
+    
+    @property
+    def output_size(self):
+        return self.output_size_callback()
+
+
+    def __call__(self, input_tuple, state_tuple, scope=None):
+        return self.calc_callback(input_tuple, state_tuple)
 
 

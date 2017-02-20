@@ -4,7 +4,7 @@ import logging
 from vilab.log import setup_log
 from vilab.api import *
 from vilab.util import *
-from vilab.calc import deduce, maximize, Monitor
+from vilab.deduce import deduce, maximize, Monitor
 from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 

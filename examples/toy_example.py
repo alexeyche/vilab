@@ -40,8 +40,8 @@ structure = {
 	logit: ndim
 }
 
-r = deduce(LL, structure=structure, feed_dict={x: x_train}, engine=PrintEngine())
-print r
+r = deduce(x, structure=structure, feed_dict={x: x_train}, engine=PrintEngine())
+
 # def monitor_callback(ep, *args):
 # 	shm(args[0], file=env.run("x_output_{}.png".format(ep)))
 # 	shs(args[1], file=env.run("z_output_{}.png".format(ep)), labels=x_classes)

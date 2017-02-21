@@ -224,6 +224,9 @@ class TfEngine(Engine):
         layers_num = kwargs.get("layers_num")
         reuse = kwargs.get("reuse", False)
         use_batch_norm = kwargs.get("use_batch_norm", False)
+        scope_name = kwargs.get("scope_name", "")
+        if scope_name:
+            name = "{}/{}".format(scope_name, name)
         if use_weight_norm:
             use_bias = False
         

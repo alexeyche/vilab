@@ -402,7 +402,8 @@ class Parser(object):
             return self.engine.function(
                 *deduced_args, 
                 size = elem_structure, 
-                name = "{}{}".format(context_name, elem.get_name()),
+                name = elem.get_name(),
+                scope_name = context_name,
                 act = elem.get_act(),
                 reuse = self.reuse,
                 weight_factor = cfg.weight_factor,

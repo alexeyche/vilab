@@ -1,5 +1,6 @@
 
 from engine import Engine
+from vilab.api import *
 
 class PrintEngine(Engine):
     def __init__(self):
@@ -23,23 +24,55 @@ class PrintEngine(Engine):
     def provide_input(self, var_name, shape):
         return var_name
 
-    def get_basic_function(self, bf):
-        return str(bf)
-
     def calc_basic_function(self, bf, *args):
-        bf = self.get_basic_function(bf)
-        return "{}(\n\t{})".format(bf, "\t, \n".join([str(a) for a in args]))
+        s_bf = self.get_basic_function(bf)
+        if bf == Arithmetic.ADD or bf == Arithmetic.SUB or bf == Arithmetic.MUL or bf == Arithmetic.POW:
+            return "{} {} {}".format(args[0], s_bf, args[1])
+        if bf == Arithmetic.NEG:
+            return "{}{}".format(s_bf, args[0])
+        return "{}({})".format(s_bf, ", ".join([str(a) for a in args]))
+
+
+    def get_basic_function(self, bf):
+        if bf == linear:
+            return None
+        elif bf == log:
+            return "log"
+        elif bf == softplus:
+            return "softplus"
+        elif bf == relu:
+            return "relu"
+        elif bf == elu:
+            return "elu"
+        elif bf == tanh:
+            return "tanh"
+        elif bf == sigmoid:
+            return "sigmoid"
+        elif bf == Arithmetic.ADD:
+            return "+"
+        elif bf == Arithmetic.SUB:
+            return "-"
+        elif bf == Arithmetic.MUL:
+            return "*"
+        elif bf == Arithmetic.POW:
+            return "^"
+        elif bf == Arithmetic.POS:
+            return None
+        elif bf == Arithmetic.NEG:
+            return "-"
+        else:
+            raise Exception("Unsupported basic function: {}".format(bf))
 
     def function(self, *args, **kwargs):
-        return "{}(\n\t{})".format(kwargs["name"], "\t, \n".join([str(a) for a in args]))
+        return "{}({})".format(kwargs["name"], ",".join([str(a) for a in args]))
 
     def calculate_metrics(self, metrics, *args):
-        return "{}(\n\t{})".format(metrics.get_name(), "\t, \n".join([str(a) for a in args]))
+        return "{}({})".format(metrics.get_name(), ",".join([str(a) for a in args]))
 
     def iterate_over_sequence(self, callback):
         raise NotImplementedError
 
     def get_density(self, density):
-        return "{}(\n\t{})".format(density.get_name(), "\t, \n".join([str(a) for a in density.get_args()]))
+        return "{}({})".format(density.get_name(), ",".join([str(a) for a in density.get_args()]))
 
 

@@ -6,11 +6,14 @@ class PrintEngine(Engine):
     def __init__(self):
         self._debug_outputs = []
 
+    def is_data_engine(self):
+        return False
+
     def sample(self, density, shape, importance_samples):
         return "~{}({})".format(density.get_name(), ", ".join([str(a) for a in density.get_args()]))
 
     def likelihood(self, density, data):
-        return "log({})".format(density)
+        return "ll({})".format(density)
 
     def run(self, *args, **kwargs):
         return [", ".join([ str(a) for a in args[0]])]
@@ -69,8 +72,8 @@ class PrintEngine(Engine):
     def calculate_metrics(self, metrics, *args):
         return "{}({})".format(metrics.get_name(), ",".join([str(a) for a in args]))
 
-    def iterate_over_sequence(self, callback):
-        raise NotImplementedError
+    def iterate_over_sequence(self, callback, output_size, state_size):
+        return ""
 
     def get_density(self, density):
         return "{}({})".format(density.get_name(), ",".join([str(a) for a in density.get_args()]))

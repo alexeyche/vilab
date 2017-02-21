@@ -1,6 +1,10 @@
 
 
 class Engine(object):
+
+    def is_data_engine(self):
+        return True
+
     def sample(self, density, shape, importance_samples):
         raise NotImplementedError
 
@@ -41,5 +45,5 @@ class Engine(object):
     def calculate_metrics(self, metrics, *args):
         raise NotImplementedError        
 
-    def iterate_over_sequence(self, callback):
+    def iterate_over_sequence(self, callback, output_size, state_size):
         raise NotImplementedError

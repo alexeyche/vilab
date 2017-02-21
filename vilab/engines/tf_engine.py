@@ -7,6 +7,7 @@ from vilab.util import is_sequence
 ds = tf.contrib.distributions
 import numbers
 from tensorflow.python.ops import rnn_cell as rc
+from tensorflow.python.ops import rnn
 
 from engine import Engine
 
@@ -356,19 +357,30 @@ class TfEngine(Engine):
 
 
     
-    def iterate_over_sequence(self, callback):
-        pass
+    def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
+        cell = ArbitraryRNNCell(callback, output_size, state_size)
+        return out_gen, finstate_gen = rnn.dynamic_rnn(
+            cell, 
+            sequence, 
+            initial_state=state,
+            time_major=True
+        )
+
 
 
 class ArbitraryRNNCell(rc.RNNCell):
-    def __init__(self, calc_callback, output_size_callback): #, base_cell = rc.BasicRNNCell):
+    def __init__(self, calc_callback, output_size, state_size): #, base_cell = rc.BasicRNNCell):
         self.calc_callback = calc_callback
-        self.output_size_callback = output_size_callback
-    
+        self._output_size = output_size
+        self._state_size = state_size
+
     @property
     def output_size(self):
-        return self.output_size_callback()
+        return self._output_size
 
+    @property
+    def state_size(self):
+        return self._state_size
 
     def __call__(self, input_tuple, state_tuple, scope=None):
         return self.calc_callback(input_tuple, state_tuple)

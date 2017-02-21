@@ -9,6 +9,7 @@ from vilab.datasets import load_toy_dataset
 from vilab.env import Env
 
 from vilab.engines.print_engine import PrintEngine
+from vilab.engines.var_engine import VarEngine
 
 setup_log(logging.INFO)
 
@@ -40,53 +41,39 @@ structure = {
 	logit: ndim
 }
 
-r = deduce(x, structure=structure, feed_dict={x: x_train}, engine=PrintEngine())
 
-# def monitor_callback(ep, *args):
-# 	shm(args[0], file=env.run("x_output_{}.png".format(ep)))
-# 	shs(args[1], file=env.run("z_output_{}.png".format(ep)), labels=x_classes)
+
+def monitor_callback(ep, *args):
+	shm(args[0], file=env.run("x_output_{}.png".format(ep)))
+	shs(args[1], file=env.run("z_output_{}.png".format(ep)), labels=x_classes)
 
 	
-# out, mon_out = maximize(
-# 	LL, 
-# 	epochs=1000,
-# 	learning_rate=1e-03,
-# 	optimizer=Optimizer.ADAM,
-# 	feed_dict={x: x_train},
-# 	structure=structure,
-# 	batch_size=batch_size,
-# 	monitor=Monitor(
-# 		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
-# 		freq=100,
-# 		callback=monitor_callback
-# 	)
-# )
+out, mon_out, ctx = maximize(
+	LL, 
+	epochs=1000,
+	learning_rate=1e-03,
+	optimizer=Optimizer.ADAM,
+	feed_dict={x: x_train},
+	structure=structure,
+	batch_size=batch_size,
+	monitor=Monitor(
+		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
+		freq=100,
+		callback=monitor_callback
+	)
+)
 
 
-# x_logit = deduce(
-# 	logit(z), 
-# 	context=log(p(x | z)),
-# 	feed_dict={x: x_train}, 
-# 	structure=structure, 
-# 	reuse=True
-# )
+x_logit, ctx = deduce(logit(z), context=ctx)
+z_mu_embed, ctx = deduce(mu(x), context=ctx)
 
-# z_mu_embed = deduce(
-# 	mu(x), 
-# 	context=log(p(x | z)),
-# 	feed_dict={x: x_train}, 
-# 	structure=structure, 
-# 	reuse=True
-# )
-
-# shl(
-# 	mon_out[:,2],
-# 	mon_out[:,3],
-# 	mon_out[:,4],
-# 	np.exp(0.5 * mon_out[:,5]),
-# 	labels = ["KL", "log_p_x", "mu", "var"],
-# 	file = env.run("result.png")
-# )
-
-# shm(np.clip(x_logit, 0.0, 1.0))
-# shs(z_mu_embed, labels=x_classes)
+shl(
+	mon_out[:,2],
+	mon_out[:,3],
+	mon_out[:,4],
+	np.exp(0.5 * mon_out[:,5]),
+	labels = ["KL", "log_p_x", "mu", "var"],
+	file = env.run("result.png")
+)
+shm(np.clip(x_logit, 0.0, 1.0))
+shs(z_mu_embed, labels=x_classes)

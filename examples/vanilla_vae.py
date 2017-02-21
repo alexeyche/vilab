@@ -56,7 +56,7 @@ def monitor_callback(ep, *args):
 	shm(get_pic(args[0][0,:]), file=env.run("x_output_{}.png".format(ep)))
 	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=t_test)
 
-out, mon_out = maximize(
+out, mon_out, ctx = maximize(
 	LL, 
 	epochs=75,
 	learning_rate=0.001,
@@ -84,12 +84,6 @@ shl(
 )
 
 
-m = deduce(
-	mu(x), 
-	context=log(p(x | z)),
-	feed_dict={x: x_test[:5000,:]}, 
-	structure={mlp: (200, 200), z: 2, logit: ndim}, 
-	reuse=True
-)
+m, _ = deduce(mu(x), feed_dict={x: x_test[:5000]}, context=ctx)
 
 shs(m, labels=t_test[:5000], file=env.run("embedding.png"))

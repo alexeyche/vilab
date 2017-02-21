@@ -25,7 +25,7 @@ sm = deduce(
 	res,
 	feed_dict={
 		x: np.random.randn(100, 10, 5),
-		h[0]: np.zeros((10, 3))
+		h[0]: np.zeros((10, 3)),
 	},
 	structure={
 		y: 11

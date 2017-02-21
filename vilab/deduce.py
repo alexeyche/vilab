@@ -1,10 +1,14 @@
 
-from vilab.parser import Parser
 import numpy as np
+from collections import OrderedDict
+
+from vilab.parser import Parser
 
 from vilab.api import *
 from vilab.engines.tf_engine import TfEngine
-from collections import OrderedDict
+from vilab.engines.print_engine import PrintEngine
+from vilab.log import setup_log
+
 
 def get_batch_size(data):
     if len(data.shape) == 3:
@@ -82,14 +86,48 @@ def _run(engine, leaves_to_run, feed_dict, batch_size, engine_inputs):
             for out_id, (out, bout) in enumerate(zip(outputs, batch_outputs)):
                 if not bout is None:
                     outputs[out_id] = np.concatenate([out, bout])
-
+        if not engine.is_data_engine(): # no need to slice data for this engine
+            break
     return outputs  
 
-def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
+
+class DeduceContext(object):
+    def __init__(self, parser):
+        self.parser = parser
+        self.feed_dict = parser.data_info.get_feed_dict()
+        self.structure = parser.structure
+        self.batch_size = parser.batch_size
+        self.engine = parser.engine
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "DeduceContext(\n\tstructure={},\n\tbatch_size={},\n\tfeed_dict keys={}\n)".format(self.structure, self.batch_size, self.feed_dict.keys())
+
+def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
+    str_repr = None
+    if not isinstance(engine, PrintEngine) and context is None:
+        str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse, silent, context, engine=PrintEngine())
+
     log_level = logging.getLogger().level
     if silent:
         setup_log(logging.CRITICAL)        
-        
+    
+    if not str_repr is None:
+        logging.info("== DEDUCE ===============================")
+        logging.info("String representation of deducing element:")
+        logging.info("\t{}".format(str_repr))
+    
+    parser = None
+    if not context is None:
+        feed_dict =  context.feed_dict if feed_dict is None else feed_dict
+        structure = context.structure
+        batch_size = context.batch_size
+        parser = context.parser
+        engine = context.engine
+        parser.reuse = True
+
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
     
@@ -105,10 +143,7 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silen
     if is_sequence(elem):
         top_elem = elem[0]
     
-    if context:
-        parser = Parser(engine, context, feed_dict, structure, batch_size, reuse)
-        parser.deduce(context)
-    else:
+    if parser is None:
         parser = Parser(engine, top_elem, feed_dict, structure, batch_size, reuse)
         
     if is_sequence(elem):
@@ -124,8 +159,8 @@ def deduce(elem, feed_dict={}, structure={}, batch_size=None, reuse=False, silen
         setup_log(log_level)        
 
     if not is_sequence(elem):
-        return outputs[0]
-    return outputs
+        return outputs[0], DeduceContext(parser)
+    return outputs, DeduceContext(parser)
 
 class Monitor(object):
     def __init__(self, elems, freq=1, feed_dict=None, callback=None):
@@ -146,6 +181,12 @@ def maximize(
     monitor=Monitor([]),
     engine=TfEngine()
 ):
+    assert not isinstance(engine, PrintEngine), "Can't maximize with PrintEngine"
+
+    str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
+    logging.info("== MAXIMIZE ===============================")
+    logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
+    
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
 
@@ -200,4 +241,4 @@ def maximize(
 
         # _ = gc.collect()
 
-    return returns[0], np.asarray(monitoring_values)
+    return returns[0], np.asarray(monitoring_values), DeduceContext(parser)

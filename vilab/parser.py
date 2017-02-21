@@ -3,6 +3,7 @@
 from vilab.api import *
 from vilab.util import is_sequence
 from vilab.log import setup_log
+from vilab.engines.var_engine import VarEngine
 
 import logging
 import copy
@@ -19,7 +20,60 @@ class DensityView(object):
     DENSITY = "density"
 
 
+
+
 class Parser(object):
+    class DataInfo(object):
+        def __init__(self, feed_dict):
+            self._feed_dict = feed_dict
+            self._smart = False
+
+        def set_smart(self):
+            self._smart = True
+
+        def has(self, var):
+            if not self._smart:
+                return var in self._feed_dict
+
+            has_simple_var = var in self._feed_dict
+            if not has_simple_var and isinstance(var, PartOfSequence) or isinstance(var, Sequence):
+                seqs = set(
+                    [ k.get_seq() for k in self._feed_dict if isinstance(k, PartOfSequence)] + 
+                    [ k for k in self._feed_dict if isinstance(k, Sequence)]
+                )
+                if isinstance(var, PartOfSequence):
+                    var = var.get_seq()
+                return var in seqs
+            return has_simple_var
+
+        def get_shape(self, var):
+            if not self._smart:
+                assert var in self._feed_dict
+                return self._feed_dict[var].shape[1:]
+
+            if var in self._feed_dict:
+                if isinstance(var, Sequence):
+                    return self._feed_dict[var].shape[2:]
+                return self._feed_dict[var].shape[1:]
+
+            shapes = dict([
+                (k, v.shape[2:]) 
+                for k, v in self._feed_dict.iteritems() 
+                if isinstance(k, Sequence)
+            ] + [
+                (k.get_seq(), v.shape[1:])
+                for k, v in self._feed_dict.iteritems() 
+                if isinstance(k, PartOfSequence) 
+            ])
+            if isinstance(var, PartOfSequence):
+                var = var.get_seq()
+            print shapes
+            assert var in shapes 
+            return shapes[var]
+
+        def get_feed_dict(self):
+            return self._feed_dict
+
     Ctx = namedtuple("Ctx", [
         "statement_id", 
         "output", 
@@ -55,7 +109,7 @@ class Parser(object):
 
     def __init__(self, engine, output, feed_dict, structure, batch_size, reuse=False, context=None):
         self.engine = engine
-        self.feed_dict = feed_dict
+        self.data_info = Parser.DataInfo(feed_dict)
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
@@ -68,8 +122,8 @@ class Parser(object):
         self.default_ctx = Parser.Ctx(None, output, None, probability, None, DensityView.SAMPLE, False, None)
 
         self.variable_set = set()
-        self.statements_met = set()
-        
+        self.variables_met = set()
+
         self.visited = {}
         self.engine_inputs = {}
         
@@ -90,6 +144,9 @@ class Parser(object):
         self.level = 0
 
 
+    def get_variable_history(self):
+        return self.variables_met
+
     def get_engine_inputs(self):
         return self.engine_inputs
 
@@ -100,7 +157,7 @@ class Parser(object):
         if isinstance(elem, Variable):
             return None
         key = (elem, ctx.density_view)
-        if key in self.visited and not elem in self.feed_dict:
+        if key in self.visited and not self.data_info.has(elem):
             logging.debug("CACHE HIT: Element {} is already visited. Returning {} and ignoring ...".format(key, self.visited[key]))
             return self.visited[key]
         # logging.debug(": {} is not found, calculating".format(key))
@@ -206,11 +263,10 @@ class Parser(object):
                 importance_samples=cfg.importance_samples
             )
         elif ctx.density_view == DensityView.PROBABILITY:
-            assert ctx.output in self.feed_dict, "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
+            assert self.data_info.has(ctx.output), "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
             assert not isinstance(dst_elem, DiracDelta), "Can't calculate likelihood value for DiracDelta distribution"
 
-            data = self.feed_dict[ctx.output]
-            provided_input = self.engine.provide_input(elem.get_name(), (self.batch_size, ) + data.shape[1:])
+            provided_input = self.engine.provide_input(elem.get_name(), (self.batch_size, ) + self.data_info.get_shape(ctx.output))
 
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
             self.engine_inputs[provided_input] = ctx.output
@@ -280,12 +336,13 @@ class Parser(object):
 
     def variable(self, elem, ctx):
         is_part_of_sequence = isinstance(elem, PartOfSequence)
+        self.variables_met.add(elem)
 
         logging.debug("Deducer({}): deducing for variable".format(elem))
 
         recursion = elem in self.variable_set
         if recursion:
-            if not elem in self.feed_dict:
+            if not self.data_info.has(elem):
                 raise Exception("Expecting data on the top for {}".format(elem))
             else:
                 logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
@@ -294,19 +351,19 @@ class Parser(object):
 
         next_statement_id, next_density, next_probability = self.deduce_variable(elem, ctx)
 
-        assert not next_statement_id is None or elem in self.feed_dict or is_part_of_sequence, "Failed to deduce variable {}, need to provide data for variable".format(elem)
+        assert not next_statement_id is None or self.data_info.has(elem) or \
+            (is_part_of_sequence and not ctx.sequence_info is None), \
+            "Failed to deduce variable {}, need to provide data for variable".format(elem)
         
-        if next_statement_id is None and is_part_of_sequence:
-            assert not ctx.sequence_info is None, "Got part of sequence without sequence_info"
+        if next_statement_id is None and is_part_of_sequence and not ctx.sequence_info is None:
+            # assert not ctx.sequence_info is None, "Got part of sequence without sequence_info"
             assert elem in ctx.sequence_info, "Couldn't find sequence data in sequence info for {}".format(elem)
             return ctx.sequence_info[elem]
-            
 
-        if next_statement_id is None and elem in self.feed_dict:
+        if next_statement_id is None and self.data_info.has(elem):
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
-        
-            data = self.feed_dict[elem]
-            provided_input = self.engine.provide_input(elem.get_scope_name(), (self.batch_size, ) + data.shape[1:])
+            
+            provided_input = self.engine.provide_input(elem.get_scope_name(), (self.batch_size, ) + self.data_info.get_shape(elem))
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
             self.engine_inputs[provided_input] = elem
             if not recursion:
@@ -437,7 +494,10 @@ class Parser(object):
         return elem
 
     def deduce_sequence(self, elem, ctx):
-        variables = set([ item for v in Sequence.REGISTER.values() for item in v.get_parts().values() ])
+        var_parser = Parser(VarEngine(), elem, self.data_info.get_feed_dict(), self.structure, self.batch_size)
+        var_parser.data_info.set_smart()
+        elem_out = var_parser.deduce(elem)
+        variables = var_parser.get_variable_history()
         
         state_variables, input_variables = [], []
 
@@ -464,11 +524,14 @@ class Parser(object):
                 seq, seq, next_idx
             )
             output_state_variables.append(seq_parts[next_idx])
-        
+
+        state_size = []        
         for state_var in output_state_variables:
             if state_var in input_variables:
                 input_variables.remove(state_var)
-
+            h0 = state_var.get_seq()[0]
+            assert self.data_info.has(h0), "Expecting {} in feed dict as start value for state sequence {}".format(h0, h0.get_seq())
+            state_size.append(self.data_info.get_shape(h0))
 
         logging.debug("Preparing to run rnn with input variables: {}, state variables: {}".format(
             ", ".join([str(v) for v in input_variables]),
@@ -507,12 +570,11 @@ class Parser(object):
 
             return res, tuple(output_state)
 
-        self.engine.run_sequence(get_value)
+        return self.engine.iterate_over_sequence(get_value, elem_out.get_shape()[1:], tuple(state_size))
 
     def sequence_operation(self, elem, ctx):
         logging.debug("Got sequence operation: {}".format(elem))
-        self.deduce_sequence(elem.get_expr(), ctx)
-        self.engine.get_sequence()
-        return 
+        seq = self.deduce_sequence(elem.get_expr(), ctx)
+        return seq
 
 

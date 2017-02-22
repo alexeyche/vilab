@@ -28,42 +28,24 @@ class Parser(object):
             self._feed_dict = feed_dict
 
         def has(self, var):
-            return var in self._feed_dict
-
-            # has_simple_var = var in self._feed_dict
-            # if not has_simple_var and isinstance(var, PartOfSequence) or isinstance(var, Sequence):
-            #     seqs = set(
-            #         [ k.get_seq() for k in self._feed_dict if isinstance(k, PartOfSequence)] + 
-            #         [ k for k in self._feed_dict if isinstance(k, Sequence)]
-            #     )
-            #     if isinstance(var, PartOfSequence):
-            #         var = var.get_seq()
-            #     return var in seqs
-            # return has_simple_var
+            has_value = var in self._feed_dict
+            if not has_value and isinstance(var, PartOfSequence):
+                has_value = var.get_seq() in self._feed_dict
+            return has_value
 
         def get_shape(self, var):
-            assert var in self._feed_dict
-            return self._feed_dict[var].shape[1:]
-
-            # if var in self._feed_dict:
-            #     if isinstance(var, Sequence):
-            #         return self._feed_dict[var].shape[2:]
-            #     return self._feed_dict[var].shape[1:]
-
-            # shapes = dict([
-            #     (k, v.shape[2:]) 
-            #     for k, v in self._feed_dict.iteritems() 
-            #     if isinstance(k, Sequence)
-            # ] + [
-            #     (k.get_seq(), v.shape[1:])
-            #     for k, v in self._feed_dict.iteritems() 
-            #     if isinstance(k, PartOfSequence) 
-            # ])
-            # if isinstance(var, PartOfSequence):
-            #     var = var.get_seq()
-            # print shapes
-            # assert var in shapes 
-            # return shapes[var]
+            assert self.has(var)
+            shape = None
+            if var in self._feed_dict:
+                shape = self._feed_dict[var].shape
+            elif isinstance(var, PartOfSequence):
+                shape = self._feed_dict[var.get_seq()].shape
+            assert not shape is None
+            if len(shape) == 2:
+                return shape[1:]
+            elif len(shape) == 3:
+                return shape[2:]
+            raise Exception()
 
         def get_feed_dict(self):
             return self._feed_dict
@@ -148,6 +130,7 @@ class Parser(object):
             numbers.Integral: self.identity,
             numbers.Real: self.identity,
             SequenceOperation: self.sequence_operation,
+            Sequence: self.sequence,
         }
         self.level = 0
 
@@ -503,6 +486,7 @@ class Parser(object):
 
     def deduce_sequence(self, elem, ctx):
         state_variables, input_variables, input_data, state_start_data, state_size = [], [], [], [], []
+        input_var_cache, state_var_cache = set(), set()
 
         def has_var_data(var, feed_dict):
             if not var in feed_dict:
@@ -523,37 +507,38 @@ class Parser(object):
                 assert isinstance(idx, Index)
                 
                 if idx.get_offset() == 0: # input data
-                    input_variables.append(var)
                     assert var.get_seq() in feed_dict, "Expecting sequence data for {}".format(v.get_seq())
                     assert len(feed_dict[var.get_seq()].shape) == 3, "Input data for sequence must have alignment time x batch x dimension"
                     
                     input_shape = feed_dict[var.get_seq()].shape
+                    if not var.get_seq() in input_var_cache:
+                        input_variables.append(var)
+                        input_var_cache.add(var.get_seq())
                     
-                    provided_input = self.engine.provide_input(
-                        var.get_seq().get_name(), (input_shape[0], self.batch_size, input_shape[2])
-                    )
-
-                    assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(var.get_seq().get_name())
-                    self.engine_inputs[provided_input] = var.get_seq()
-                    input_data.append(provided_input)
+                        provided_input = self.engine.provide_input(
+                            var.get_seq().get_name(), (input_shape[0], self.batch_size, input_shape[2])
+                        )
+                        self.engine_inputs[provided_input] = var.get_seq()
+                        input_data.append(provided_input)
                     
                     return input_shape[2:]
                 elif idx.get_offset() == -1: # state data
-                    state_variables.append(var)
-                    
                     h0 = var.get_seq()[0]
                     assert h0 in feed_dict, "Expecting {} in feed dict as start value for state sequence {}".format(h0, h0.get_seq())
-
                     h0_shape = feed_dict[h0].shape
-                    provided_input = self.engine.provide_input(
-                        h0.get_scope_name(), (self.batch_size, h0_shape[1])
-                    )
+                        
+                    if not h0 in state_var_cache:
+                        state_variables.append(var)
+                        state_var_cache.add(h0)
 
-                    assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(h0.get_name())
-                    self.engine_inputs[provided_input] = h0
-                    
-                    state_start_data.append(provided_input)
-                    state_size.append(h0_shape[1:])
+                        provided_input = self.engine.provide_input(
+                            h0.get_scope_name(), (self.batch_size, h0_shape[1])
+                        )
+
+                        self.engine_inputs[provided_input] = h0
+                        
+                        state_start_data.append(provided_input)
+                        state_size.append(h0_shape[1])
 
                     return h0_shape[1:]
                 else:
@@ -591,9 +576,10 @@ class Parser(object):
         logging.debug("And with output state variables: {}".format(
             ", ".join([str(v) for v in output_state_variables]),
         )) 
-
+        
         def get_value(input_tuple, state_tuple):
             sequence_info = {}
+        
             for var, data in zip(state_variables, state_tuple):
                 sequence_info[var] = data
             for var, data in zip(input_variables, input_tuple):
@@ -620,12 +606,14 @@ class Parser(object):
                 )
 
             return res, tuple(output_state)
-
         out_gen, finstate_gen = self.engine.iterate_over_sequence(
-            input_data, state_start_data, get_value,
-            tuple(elem_out.get_shape()[1:]), tuple(state_size)
+            tuple(input_data), tuple(state_start_data), get_value,
+            tuple([elem_out.get_shape()[1]]), tuple(state_size)
         )
         return out_gen
+
+    def sequence(self, elem, ctx):
+        return self.deduce_sequence(elem, ctx)
 
     def sequence_operation(self, elem, ctx):
         logging.debug("Got sequence operation: {}".format(elem))

@@ -52,7 +52,10 @@ def get_data_slice(element_id, batch_size, feed_dict):
     for k, v in feed_dict.iteritems():
         v_shape = v.shape
         next_element_id = min(element_id + batch_size, get_batch_size(v))
-        data_v = v[element_id:next_element_id]
+        if len(v_shape) == 2:
+            data_v = v[element_id:next_element_id, :]
+        elif len(v_shape) == 3:
+            data_v = v[:, element_id:next_element_id, :]
         data_len = next_element_id - element_id
         if batch_size > data_len:
             if len(v_shape) == 2:
@@ -60,7 +63,6 @@ def get_data_slice(element_id, batch_size, feed_dict):
             elif len(v_shape) == 3:
                 data_v = np.concatenate([data_v, np.zeros((v_shape[0], batch_size - data_len, v_shape[2]))])
         data_slice[k] = data_v
-    
     return data_slice, element_id + batch_size
 
 
@@ -145,13 +147,13 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
     
     if parser is None:
         parser = Parser(engine, top_elem, Parser.DataInfo(feed_dict), structure, batch_size, reuse)
-        
+
     if is_sequence(elem):
         for subelem in elem:
             results.append(parser.deduce(subelem))
     else:
         results.append(parser.deduce(elem))
-
+    
     logging.debug("Collected {}".format(results))
     outputs = _run(engine, results, feed_dict, batch_size, parser.get_engine_inputs())
 

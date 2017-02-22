@@ -1,6 +1,7 @@
 
 import numbers
 from variable import Variable
+from function import Arithmetic
 
 class Index(object):
     def __init__(self, name, offset = 0):
@@ -103,7 +104,7 @@ class Sequence(object):
     def get_name(self):
         return self._name
 
-class SequenceOperation(object):
+class SequenceOperation(Arithmetic):
     def __init__(self, name, expr):
         self._name = name
         self._expr = expr

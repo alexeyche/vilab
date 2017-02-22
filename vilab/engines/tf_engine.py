@@ -161,9 +161,9 @@ class TfEngine(Engine):
         optimizer_tf = self.get_optimizer(optimizer, learning_rate)
         
         tvars = tf.trainable_variables()
-        grads = tf.gradients(-tf.reduce_mean(value), tvars)
+        grads_raw = tf.gradients(-tf.reduce_mean(value), tvars)
 
-        # grads, _ = tf.clip_by_global_norm(grads_raw, 5.0)
+        grads, _ = tf.clip_by_global_norm(grads_raw, 5.0)
         apply_grads = optimizer_tf.apply_gradients(zip(grads, tvars))
 
         return apply_grads
@@ -370,11 +370,10 @@ class TfEngine(Engine):
 
 
 class ArbitraryRNNCell(rc.RNNCell):
-    def __init__(self, calc_callback, output_size, state_size): #, base_cell = rc.BasicRNNCell):
+    def __init__(self, calc_callback, output_size, state_size):
         self.calc_callback = calc_callback
         self._output_size = output_size
         self._state_size = state_size
-        print self._output_size, self._state_size
         
     @property
     def output_size(self):

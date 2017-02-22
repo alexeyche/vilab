@@ -13,21 +13,38 @@ setup_log(logging.DEBUG)
 x, y, h = Sequence("x"), Sequence("y"), Sequence("h")
 t = Index("t")
 
+Function.configure(
+	weight_factor = 0.1,
+)
+
 f = Function("f")
 
 y[t] == f(x[t], h[t-1])
 h[t] == f(y[t])
 
-res = Summation(y[t])
+cost = - Summation(SquaredLoss(y[t], x[t]))
 
+###########
 
-sm = deduce(
-	res,
+x_train = 0.1*np.random.randn(100, 10, 5)
+
+def monitor_callback(ep, *args):
+	logging.info(np.mean(np.square(args[0] - x_train)))
+
+out, _, ctx = maximize(
+	cost, 
+	epochs=75,
+	learning_rate=0.1,
 	feed_dict={
-		x: np.random.randn(100, 10, 5),
-		h[0]: np.zeros((10, 3)),
+		x: x_train,
+		h[0]: np.zeros((10, 3))
 	},
 	structure={
-		y: 11
-	}
+		y: 5
+	},
+	monitor=Monitor(
+		[y[t]],
+		freq=5,
+		callback=monitor_callback
+	)
 )

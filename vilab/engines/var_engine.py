@@ -80,7 +80,7 @@ class VarEngine(Engine):
         
         return VarTensor((batch_size, 1), args)
 
-    def iterate_over_sequence(self, callback, output_size, state_size):
+    def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
         raise NotImplementedError
 
     def get_density(self, density):

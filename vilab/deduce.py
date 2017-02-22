@@ -144,7 +144,7 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
         top_elem = elem[0]
     
     if parser is None:
-        parser = Parser(engine, top_elem, feed_dict, structure, batch_size, reuse)
+        parser = Parser(engine, top_elem, Parser.DataInfo(feed_dict), structure, batch_size, reuse)
         
     if is_sequence(elem):
         for subelem in elem:
@@ -195,7 +195,7 @@ def maximize(
     if batch_size is None:
         batch_size = data_size
     
-    parser = Parser(engine, elem, feed_dict, structure, batch_size)
+    parser = Parser(engine, elem, Parser.DataInfo(feed_dict), structure, batch_size)
     to_optimize = parser.deduce(elem)
         
     opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)

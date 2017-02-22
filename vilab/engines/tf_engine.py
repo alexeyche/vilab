@@ -359,12 +359,13 @@ class TfEngine(Engine):
     
     def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
         cell = ArbitraryRNNCell(callback, output_size, state_size)
-        return out_gen, finstate_gen = rnn.dynamic_rnn(
+        out_gen, finstate_gen = rnn.dynamic_rnn(
             cell, 
             sequence, 
             initial_state=state,
             time_major=True
         )
+        return out_gen, finstate_gen
 
 
 
@@ -373,7 +374,8 @@ class ArbitraryRNNCell(rc.RNNCell):
         self.calc_callback = calc_callback
         self._output_size = output_size
         self._state_size = state_size
-
+        print self._output_size, self._state_size
+        
     @property
     def output_size(self):
         return self._output_size

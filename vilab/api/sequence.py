@@ -100,6 +100,8 @@ class Sequence(object):
     def get_parts(self):
         return self._parts
 
+    def get_name(self):
+        return self._name
 
 class SequenceOperation(object):
     def __init__(self, name, expr):

@@ -45,5 +45,5 @@ class Engine(object):
     def calculate_metrics(self, metrics, *args):
         raise NotImplementedError        
 
-    def iterate_over_sequence(self, callback, output_size, state_size):
+    def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
         raise NotImplementedError

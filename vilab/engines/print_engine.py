@@ -72,8 +72,8 @@ class PrintEngine(Engine):
     def calculate_metrics(self, metrics, *args):
         return "{}({})".format(metrics.get_name(), ",".join([str(a) for a in args]))
 
-    def iterate_over_sequence(self, callback, output_size, state_size):
-        return ""
+    def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
+        return "", ""
 
     def get_density(self, density):
         return "{}({})".format(density.get_name(), ",".join([str(a) for a in density.get_args()]))

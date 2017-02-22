@@ -26,53 +26,61 @@ class Parser(object):
     class DataInfo(object):
         def __init__(self, feed_dict):
             self._feed_dict = feed_dict
-            self._smart = False
-
-        def set_smart(self):
-            self._smart = True
 
         def has(self, var):
-            if not self._smart:
-                return var in self._feed_dict
+            return var in self._feed_dict
 
-            has_simple_var = var in self._feed_dict
-            if not has_simple_var and isinstance(var, PartOfSequence) or isinstance(var, Sequence):
-                seqs = set(
-                    [ k.get_seq() for k in self._feed_dict if isinstance(k, PartOfSequence)] + 
-                    [ k for k in self._feed_dict if isinstance(k, Sequence)]
-                )
-                if isinstance(var, PartOfSequence):
-                    var = var.get_seq()
-                return var in seqs
-            return has_simple_var
+            # has_simple_var = var in self._feed_dict
+            # if not has_simple_var and isinstance(var, PartOfSequence) or isinstance(var, Sequence):
+            #     seqs = set(
+            #         [ k.get_seq() for k in self._feed_dict if isinstance(k, PartOfSequence)] + 
+            #         [ k for k in self._feed_dict if isinstance(k, Sequence)]
+            #     )
+            #     if isinstance(var, PartOfSequence):
+            #         var = var.get_seq()
+            #     return var in seqs
+            # return has_simple_var
 
         def get_shape(self, var):
-            if not self._smart:
-                assert var in self._feed_dict
-                return self._feed_dict[var].shape[1:]
+            assert var in self._feed_dict
+            return self._feed_dict[var].shape[1:]
 
-            if var in self._feed_dict:
-                if isinstance(var, Sequence):
-                    return self._feed_dict[var].shape[2:]
-                return self._feed_dict[var].shape[1:]
+            # if var in self._feed_dict:
+            #     if isinstance(var, Sequence):
+            #         return self._feed_dict[var].shape[2:]
+            #     return self._feed_dict[var].shape[1:]
 
-            shapes = dict([
-                (k, v.shape[2:]) 
-                for k, v in self._feed_dict.iteritems() 
-                if isinstance(k, Sequence)
-            ] + [
-                (k.get_seq(), v.shape[1:])
-                for k, v in self._feed_dict.iteritems() 
-                if isinstance(k, PartOfSequence) 
-            ])
-            if isinstance(var, PartOfSequence):
-                var = var.get_seq()
-            print shapes
-            assert var in shapes 
-            return shapes[var]
+            # shapes = dict([
+            #     (k, v.shape[2:]) 
+            #     for k, v in self._feed_dict.iteritems() 
+            #     if isinstance(k, Sequence)
+            # ] + [
+            #     (k.get_seq(), v.shape[1:])
+            #     for k, v in self._feed_dict.iteritems() 
+            #     if isinstance(k, PartOfSequence) 
+            # ])
+            # if isinstance(var, PartOfSequence):
+            #     var = var.get_seq()
+            # print shapes
+            # assert var in shapes 
+            # return shapes[var]
 
         def get_feed_dict(self):
             return self._feed_dict
+
+    class DataInfoCb(object):
+        def __init__(self, feed_dict, has_cb, get_shape_cb):
+            self._feed_dict = feed_dict
+            self._has_cb = has_cb
+            self._get_shape_cb = get_shape_cb
+
+        def has(self, var):
+            return self._has_cb(var, self._feed_dict)
+
+        def get_shape(self, var):
+            return self._get_shape_cb(var, self._feed_dict)
+
+    
 
     Ctx = namedtuple("Ctx", [
         "statement_id", 
@@ -107,9 +115,9 @@ class Parser(object):
             ctx.sequence_info if sequence_info is None else sequence_info,
         )
 
-    def __init__(self, engine, output, feed_dict, structure, batch_size, reuse=False, context=None):
+    def __init__(self, engine, output, data_info, structure, batch_size, reuse=False, context=None):
         self.engine = engine
-        self.data_info = Parser.DataInfo(feed_dict)
+        self.data_info = data_info
         self.structure = structure
         self.batch_size = batch_size
         self.reuse = reuse
@@ -359,7 +367,7 @@ class Parser(object):
             # assert not ctx.sequence_info is None, "Got part of sequence without sequence_info"
             assert elem in ctx.sequence_info, "Couldn't find sequence data in sequence info for {}".format(elem)
             return ctx.sequence_info[elem]
-
+        
         if next_statement_id is None and self.data_info.has(elem):
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
             
@@ -494,44 +502,86 @@ class Parser(object):
         return elem
 
     def deduce_sequence(self, elem, ctx):
-        var_parser = Parser(VarEngine(), elem, self.data_info.get_feed_dict(), self.structure, self.batch_size)
-        var_parser.data_info.set_smart()
-        elem_out = var_parser.deduce(elem)
-        variables = var_parser.get_variable_history()
-        
-        state_variables, input_variables = [], []
+        state_variables, input_variables, input_data, state_start_data, state_size = [], [], [], [], []
 
-        for v in variables:
-            if isinstance(v, PartOfSequence):
-                idx = v.get_idx()
-                
-                if not isinstance(idx, Index):
-                    continue
+        def has_var_data(var, feed_dict):
+            if not var in feed_dict:
+                if isinstance(var, PartOfSequence):
+                    return var.get_seq() in set(
+                        [ k.get_seq() for k, v in feed_dict.iteritems() if isinstance(k, PartOfSequence)] + 
+                        [ k for k in feed_dict if isinstance(k, Sequence)]
+                    )
+                else:
+                    return False
+            else:
+                return True
+        
+        def get_var_shape(var, feed_dict):
+            assert has_var_data(var, feed_dict)
+            if isinstance(var, PartOfSequence):
+                idx = var.get_idx()
+                assert isinstance(idx, Index)
                 
                 if idx.get_offset() == 0: # input data
-                    input_variables.append(v)
+                    input_variables.append(var)
+                    assert var.get_seq() in feed_dict, "Expecting sequence data for {}".format(v.get_seq())
+                    assert len(feed_dict[var.get_seq()].shape) == 3, "Input data for sequence must have alignment time x batch x dimension"
+                    
+                    input_shape = feed_dict[var.get_seq()].shape
+                    
+                    provided_input = self.engine.provide_input(
+                        var.get_seq().get_name(), (input_shape[0], self.batch_size, input_shape[2])
+                    )
+
+                    assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(var.get_seq().get_name())
+                    self.engine_inputs[provided_input] = var.get_seq()
+                    input_data.append(provided_input)
+                    
+                    return input_shape[2:]
                 elif idx.get_offset() == -1: # state data
-                    state_variables.append(v)
+                    state_variables.append(var)
+                    
+                    h0 = var.get_seq()[0]
+                    assert h0 in feed_dict, "Expecting {} in feed dict as start value for state sequence {}".format(h0, h0.get_seq())
+
+                    h0_shape = feed_dict[h0].shape
+                    provided_input = self.engine.provide_input(
+                        h0.get_scope_name(), (self.batch_size, h0_shape[1])
+                    )
+
+                    assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(h0.get_name())
+                    self.engine_inputs[provided_input] = h0
+                    
+                    state_start_data.append(provided_input)
+                    state_size.append(h0_shape[1:])
+
+                    return h0_shape[1:]
                 else:
                     raise Exception("Index offset that is not 0 or -1 is not supported yet, got {}".format(idx.get_offset()))
+            else:
+                assert var in feed_dict
+                return feed_dict[var].shape[1:]
+
+        data_info_cb = Parser.DataInfoCb(self.data_info.get_feed_dict(), has_var_data, get_var_shape)
+        var_parser = Parser(VarEngine(), elem, data_info_cb, self.structure, self.batch_size)
+        
+        elem_out = var_parser.deduce(elem)
         
         output_state_variables = []
-        for state_var in state_variables:
+        
+        for state_var, size in zip(state_variables, state_size):
             seq = state_var.get_seq()
             seq_parts = seq.get_parts()
             next_idx = state_var.get_idx() + 1
             assert next_idx in seq_parts, "Need to define generation process for sequence {} (define {}[{}])".format(
                 seq, seq, next_idx
             )
-            output_state_variables.append(seq_parts[next_idx])
-
-        state_size = []        
-        for state_var in output_state_variables:
-            if state_var in input_variables:
-                input_variables.remove(state_var)
-            h0 = state_var.get_seq()[0]
-            assert self.data_info.has(h0), "Expecting {} in feed dict as start value for state sequence {}".format(h0, h0.get_seq())
-            state_size.append(self.data_info.get_shape(h0))
+            
+            output_state = seq[next_idx]
+            if output_state in input_variables:
+                input_variables.remove(output_state)
+            output_state_variables.append(output_state)
+            self.structure[output_state] = size
 
         logging.debug("Preparing to run rnn with input variables: {}, state variables: {}".format(
             ", ".join([str(v) for v in input_variables]),
@@ -543,6 +593,7 @@ class Parser(object):
         )) 
 
         def get_value(input_tuple, state_tuple):
+            sequence_info = {}
             for var, data in zip(state_variables, state_tuple):
                 sequence_info[var] = data
             for var, data in zip(input_variables, input_tuple):
@@ -570,7 +621,11 @@ class Parser(object):
 
             return res, tuple(output_state)
 
-        return self.engine.iterate_over_sequence(get_value, elem_out.get_shape()[1:], tuple(state_size))
+        out_gen, finstate_gen = self.engine.iterate_over_sequence(
+            input_data, state_start_data, get_value,
+            tuple(elem_out.get_shape()[1:]), tuple(state_size)
+        )
+        return out_gen
 
     def sequence_operation(self, elem, ctx):
         logging.debug("Got sequence operation: {}".format(elem))

@@ -29,6 +29,7 @@ def prom_shapes(shapes):
 
 class VarEngine(Engine):
     def __init__(self):
+        super(VarEngine, self).__init__("Var")
         self._debug_outputs = []
 
     def is_data_engine(self):
@@ -81,10 +82,9 @@ class VarEngine(Engine):
         return VarTensor((batch_size, 1), args)
 
     def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
-        raise NotImplementedError
+        return callback(sequence, state)
 
     def get_density(self, density):
-
         return VarTensor(get_shape(density.get_args()[0]), density.get_args())
 
 

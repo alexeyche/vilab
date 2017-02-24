@@ -72,7 +72,22 @@ class Parser(object):
         "dependencies", 
         "density_view",
         "is_part_of_sequence",
-        "sequence_info"
+        "sequence_variables",
+        "sequence_ctx"
+    ])
+
+    SequenceCtx = namedtuple("SequenceCtx", [
+        "state_var", 
+        "input_var", 
+        "output_var",
+        "input_data", 
+        "state_start_data", 
+        "state_size",
+        "output_elem",
+        "output_state_var",
+        "input_var_cache", 
+        "state_var_cache",
+        "request_for_output"
     ])
 
     @staticmethod
@@ -84,7 +99,8 @@ class Parser(object):
         dependencies=None, 
         density_view=None, 
         is_part_of_sequence=None,
-        sequence_info=None
+        sequence_variables=None,
+        sequence_ctx=None
     ):
         return Parser.Ctx(
             ctx.statement_id if statement_id is None else statement_id,
@@ -94,11 +110,13 @@ class Parser(object):
             ctx.dependencies if dependencies is None else dependencies,
             ctx.density_view if density_view is None else density_view,
             ctx.is_part_of_sequence if is_part_of_sequence is None else is_part_of_sequence,
-            ctx.sequence_info if sequence_info is None else sequence_info,
+            ctx.sequence_variables if sequence_variables is None else sequence_variables,
+            ctx.sequence_ctx if sequence_ctx is None else sequence_ctx,
         )
 
     def __init__(self, engine, output, data_info, structure, batch_size, reuse=False, context=None):
         self.engine = engine
+        logging.debug("Creating parser with the engine {}".format(self.engine))
         self.data_info = data_info
         self.structure = structure
         self.batch_size = batch_size
@@ -109,7 +127,7 @@ class Parser(object):
                 probability = context
             else:
                 raise Exception("Unsupported type of context: {}".format(context))
-        self.default_ctx = Parser.Ctx(None, output, None, probability, None, DensityView.SAMPLE, False, None)
+        self.default_ctx = Parser.Ctx(None, output, None, probability, None, DensityView.SAMPLE, False, None, None)
 
         self.variable_set = set()
         self.variables_met = set()
@@ -161,6 +179,8 @@ class Parser(object):
         if not key in self.visited:
             self.visited[key] = value
             logging.debug("Saving {} -> {}".format(key, value))
+
+
 
     def deduce(self, elem, ctx = None):
         if ctx is None:
@@ -331,25 +351,26 @@ class Parser(object):
 
         logging.debug("Deducer({}): deducing for variable".format(elem))
 
-        recursion = elem in self.variable_set
-        if recursion:
-            if not self.data_info.has(elem):
-                raise Exception("Expecting data on the top for {}".format(elem))
-            else:
-                logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
-        else:
-            self.variable_set.add(elem)
+        # recursion = elem in self.variable_set
+        # if recursion:
+        #     if not self.data_info.has(elem):
+        #         raise Exception("Expecting data on the top for {}".format(elem))
+        #     else:
+        #         logging.info("Deducer reached to the top of {}, taking value from inputs".format(elem))
+        # else:
+        #     self.variable_set.add(elem)
 
         next_statement_id, next_density, next_probability = self.deduce_variable(elem, ctx)
 
         assert not next_statement_id is None or self.data_info.has(elem) or \
-            (is_part_of_sequence and not ctx.sequence_info is None), \
+            (is_part_of_sequence and not ctx.sequence_variables is None), \
             "Failed to deduce variable {}, need to provide data for variable".format(elem)
         
-        if next_statement_id is None and is_part_of_sequence and not ctx.sequence_info is None:
-            # assert not ctx.sequence_info is None, "Got part of sequence without sequence_info"
-            assert elem in ctx.sequence_info, "Couldn't find sequence data in sequence info for {}".format(elem)
-            return ctx.sequence_info[elem]
+        if next_statement_id is None and is_part_of_sequence and not ctx.sequence_variables is None:
+            # assert not ctx.sequence_variables is None, "Got part of sequence without sequence_variables"
+            logging.debug("Can't find next step for {}, but've found out that variable is a part of sequence with sequence variable context".format(elem))
+            assert elem in ctx.sequence_variables, "Couldn't find sequence data in sequence info for {}".format(elem)
+            return ctx.sequence_variables[elem]
         
         if next_statement_id is None and self.data_info.has(elem):
             logging.debug("Deducer({}): Found variable in inputs".format(elem))
@@ -357,8 +378,8 @@ class Parser(object):
             provided_input = self.engine.provide_input(elem.get_scope_name(), (self.batch_size, ) + self.data_info.get_shape(elem))
             assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
             self.engine_inputs[provided_input] = elem
-            if not recursion:
-                self.variable_set.remove(elem)
+            # if not recursion:
+            #     self.variable_set.remove(elem)
             return provided_input
         
         cache_key = (elem, next_probability, ctx.density_view, next_statement_id)
@@ -388,8 +409,8 @@ class Parser(object):
         
         self.visited[cache_key] = result
 
-        if not recursion:
-            self.variable_set.remove(elem)
+        # if not recursion:
+        #     self.variable_set.remove(elem)
         return result
 
     def get_variables(self, elem):
@@ -484,10 +505,25 @@ class Parser(object):
     def identity(self, elem, ctx):
         return elem
 
-    def deduce_sequence(self, elem, ctx):
-        state_variables, input_variables, input_data, state_start_data, state_size = [], [], [], [], []
-        input_var_cache, state_var_cache = set(), set()
 
+    def sequence(self, elem, ctx):
+        parts = [p for idx, p in elem.get_parts().iteritems() if idx.get_offset() == 0]
+        assert len(parts) > 0, "Need to use sequence {} in model definition".format(elem)
+        assert len(parts) == 1, "Got too many usage of sequence {} with zero offset indexing: {}".format(
+            elem, 
+            ", ".join([str(p) for p in parts])
+        )
+        
+        return self.deduce_sequence(parts[0], ctx)
+
+    def sequence_operation(self, elem, ctx):
+        logging.debug("Got sequence operation: {}".format(elem))
+        seq = self.deduce_sequence(elem.get_expr(), ctx)
+        return seq
+
+    def deduce_sequence_ctx(self, elements):
+        seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], set(), set(), False)
+        
         def has_var_data(var, feed_dict):
             if not var in feed_dict:
                 if isinstance(var, PartOfSequence):
@@ -511,15 +547,16 @@ class Parser(object):
                     assert len(feed_dict[var.get_seq()].shape) == 3, "Input data for sequence must have alignment time x batch x dimension"
                     
                     input_shape = feed_dict[var.get_seq()].shape
-                    if not var.get_seq() in input_var_cache:
-                        input_variables.append(var)
-                        input_var_cache.add(var.get_seq())
+                    if not var.get_seq() in seq_ctx.input_var_cache:
+                        seq_ctx.input_var.append(var)
+                        seq_ctx.input_var_cache.add(var.get_seq())
                     
                         provided_input = self.engine.provide_input(
                             var.get_seq().get_name(), (input_shape[0], self.batch_size, input_shape[2])
                         )
+
                         self.engine_inputs[provided_input] = var.get_seq()
-                        input_data.append(provided_input)
+                        seq_ctx.input_data.append(provided_input)
                     
                     return input_shape[2:]
                 elif idx.get_offset() == -1: # state data
@@ -527,9 +564,9 @@ class Parser(object):
                     assert h0 in feed_dict, "Expecting {} in feed dict as start value for state sequence {}".format(h0, h0.get_seq())
                     h0_shape = feed_dict[h0].shape
                         
-                    if not h0 in state_var_cache:
-                        state_variables.append(var)
-                        state_var_cache.add(h0)
+                    if not h0 in seq_ctx.state_var_cache:
+                        seq_ctx.state_var.append(var)
+                        seq_ctx.state_var_cache.add(h0)
 
                         provided_input = self.engine.provide_input(
                             h0.get_scope_name(), (self.batch_size, h0_shape[1])
@@ -537,8 +574,8 @@ class Parser(object):
 
                         self.engine_inputs[provided_input] = h0
                         
-                        state_start_data.append(provided_input)
-                        state_size.append(h0_shape[1])
+                        seq_ctx.state_start_data.append(provided_input)
+                        seq_ctx.state_size.append(h0_shape[1])
 
                     return h0_shape[1:]
                 else:
@@ -548,76 +585,112 @@ class Parser(object):
                 return feed_dict[var].shape[1:]
 
         data_info_cb = Parser.DataInfoCb(self.data_info.get_feed_dict(), has_var_data, get_var_shape)
-        var_parser = Parser(VarEngine(), elem, data_info_cb, self.structure, self.batch_size)
+        var_parser = Parser(VarEngine(), elements[0], data_info_cb, self.structure, self.batch_size)
         
-        elem_out = var_parser.deduce(elem)
-        
-        output_state_variables = []
-        
-        for state_var, size in zip(state_variables, state_size):
-            seq = state_var.get_seq()
+        for elem in elements:
+            var_seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], set(), set(), True)
+            
+            seq_ctx.output_elem.append(var_parser.deduce(
+                elem, 
+                ctx = Parser.get_ctx_with(
+                    self.default_ctx,
+                    sequence_ctx = var_seq_ctx,
+                )
+            ))
+            for ov in var_seq_ctx.output_var:
+                logging.debug("Found {} as output var, adding to RNN output".format(ov))
+                seq_ctx.output_var.append(ov)
+
+        for v, size in zip(seq_ctx.state_var, seq_ctx.state_size):
+            seq = v.get_seq()
             seq_parts = seq.get_parts()
-            next_idx = state_var.get_idx() + 1
+            next_idx = v.get_idx() + 1
             assert next_idx in seq_parts, "Need to define generation process for sequence {} (define {}[{}])".format(
                 seq, seq, next_idx
             )
             
             output_state = seq[next_idx]
-            if output_state in input_variables:
-                input_variables.remove(output_state)
-            output_state_variables.append(output_state)
+            if output_state in seq_ctx.input_var:
+                seq_ctx.input_variables.remove(output_state)
+            seq_ctx.output_state_var.append(output_state)
             self.structure[output_state] = size
 
+        return seq_ctx
+
+    def deduce_sequence(self, elem, ctx):
+        assert not ctx.sequence_ctx is None, "Need provide sequence context to deduce sequences"
+        if ctx.sequence_ctx.request_for_output:
+            ctx.sequence_ctx.output_var.append(elem)
+
         logging.debug("Preparing to run rnn with input variables: {}, state variables: {}".format(
-            ", ".join([str(v) for v in input_variables]),
-            ", ".join([str(v) for v in state_variables]),
+            ", ".join([str(v) for v in ctx.sequence_ctx.input_var]),
+            ", ".join([str(v) for v in ctx.sequence_ctx.state_var]),
         ))
         
         logging.debug("And with output state variables: {}".format(
-            ", ".join([str(v) for v in output_state_variables]),
+            ", ".join([str(v) for v in ctx.sequence_ctx.output_state_var]),
         )) 
         
         def get_value(input_tuple, state_tuple):
-            sequence_info = {}
-        
-            for var, data in zip(state_variables, state_tuple):
-                sequence_info[var] = data
-            for var, data in zip(input_variables, input_tuple):
-                sequence_info[var] = data
+            sequence_variables = {}
+                
+            for var, data in zip(ctx.sequence_ctx.state_var, state_tuple):
+                sequence_variables[var] = data
+            for var, data in zip(ctx.sequence_ctx.input_var, input_tuple):
+                sequence_variables[var] = data
+            if len(sequence_variables) == 0:
+                sequence_variables = None
             
-            res = self.deduce(
-                elem,
-                ctx = Parser.get_ctx_with(
-                    ctx,
-                    sequence_info=sequence_info,
-                )
-            )
-
+            
+            output_data = []
+            for out_var_id, out_var in enumerate(ctx.sequence_ctx.output_var if not ctx.sequence_ctx.request_for_output else [elem]):
+                logging.debug("RNN: Deducing #{} variable {} for rnn output".format(out_var_id, out_var))
+                output_data.append(self.deduce(
+                    out_var,
+                    ctx = Parser.get_ctx_with(
+                        ctx,
+                        sequence_variables=sequence_variables,
+                    )
+                ))
+            print output_data
             output_state = []
-            for state_var in output_state_variables:
+            for state_var_id, state_var in enumerate(ctx.sequence_ctx.output_state_var):
+                logging.debug("RNN: Deducing #{} variable {} for rnn output".format(state_var_id, state_var))
                 output_state.append(
                     self.deduce(
                         state_var,
                         ctx = Parser.get_ctx_with(
                             ctx,
-                            sequence_info=sequence_info,
+                            sequence_variables=sequence_variables,
                         )
                     )
                 )
 
-            return res, tuple(output_state)
+            return tuple(output_data), tuple(output_state)
+
         out_gen, finstate_gen = self.engine.iterate_over_sequence(
-            tuple(input_data), tuple(state_start_data), get_value,
-            tuple([elem_out.get_shape()[1]]), tuple(state_size)
+            tuple(ctx.sequence_ctx.input_data), 
+            tuple(ctx.sequence_ctx.state_start_data), 
+            get_value,
+            tuple([ elem_out.get_shape()[1] for elem_out in ctx.sequence_ctx.output_elem ]), 
+            tuple(ctx.sequence_ctx.state_size)
         )
-        return out_gen
+        
+        out_idx = ctx.sequence_ctx.output_var.index(elem) if not ctx.sequence_ctx.request_for_output else 0
+        return out_gen[out_idx]
 
-    def sequence(self, elem, ctx):
-        return self.deduce_sequence(elem, ctx)
+    
 
-    def sequence_operation(self, elem, ctx):
-        logging.debug("Got sequence operation: {}".format(elem))
-        seq = self.deduce_sequence(elem.get_expr(), ctx)
-        return seq
+    def do(self, elements):
+        seq_ctx = self.deduce_sequence_ctx(elements)
+        outputs = []
+        for elem in elements:
+            outputs.append(
+                self.deduce(elem, Parser.get_ctx_with(
+                    self.default_ctx,
+                    sequence_ctx = seq_ctx
+                ))
+            )
 
+        return outputs
 

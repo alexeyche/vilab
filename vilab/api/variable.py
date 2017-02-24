@@ -47,7 +47,7 @@ class Variable(object):
             p_tmp = Model(self.get_name())
             return p_tmp(self | None) == x  # unknown dependencies
         else:
-            raise Exception("Comparing with the strange type: {}".format(x))
+            return False
 
     def __cmp__(self, x):
         assert isinstance(x, Variable)

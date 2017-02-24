@@ -108,9 +108,10 @@ class DeduceContext(object):
         return "DeduceContext(\n\tstructure={},\n\tbatch_size={},\n\tfeed_dict keys={}\n)".format(self.structure, self.batch_size, self.feed_dict.keys())
 
 def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
+    elem_is_sequence = is_sequence(elem)
     str_repr = None
-    if not isinstance(engine, PrintEngine) and context is None:
-        str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse, silent, context, engine=PrintEngine())
+    # if not isinstance(engine, PrintEngine) and context is None:
+    #     str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse, silent, context, engine=PrintEngine())
 
     log_level = logging.getLogger().level
     if silent:
@@ -119,7 +120,7 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
     if not str_repr is None:
         logging.info("== DEDUCE ===============================")
         logging.info("String representation of deducing element:")
-        logging.info("\t{}".format(str_repr))
+        logging.info("    {}".format(str_repr))
     
     parser = None
     if not context is None:
@@ -141,18 +142,13 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
         batch_size = data_size
 
     results = []
-    top_elem = elem
-    if is_sequence(elem):
-        top_elem = elem[0]
+    if not is_sequence(elem):
+        elem = [elem]
     
     if parser is None:
-        parser = Parser(engine, top_elem, Parser.DataInfo(feed_dict), structure, batch_size, reuse)
+        parser = Parser(engine, elem[0], Parser.DataInfo(feed_dict), structure, batch_size, reuse)
 
-    if is_sequence(elem):
-        for subelem in elem:
-            results.append(parser.deduce(subelem))
-    else:
-        results.append(parser.deduce(elem))
+    results = parser.do(elem)
     
     logging.debug("Collected {}".format(results))
     outputs = _run(engine, results, feed_dict, batch_size, parser.get_engine_inputs())
@@ -160,7 +156,7 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
     if silent:
         setup_log(log_level)        
 
-    if not is_sequence(elem):
+    if not elem_is_sequence:
         return outputs[0], DeduceContext(parser)
     return outputs, DeduceContext(parser)
 

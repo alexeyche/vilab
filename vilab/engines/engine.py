@@ -1,6 +1,14 @@
 
 
 class Engine(object):
+    def __init__(self, name):
+        self._name = name
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        return "Engine({})".format(self._name)
 
     def is_data_engine(self):
         return True

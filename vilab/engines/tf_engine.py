@@ -41,6 +41,7 @@ def xavier_vec_init(fan_in, const=1.0):
 class TfEngine(Engine):
     
     def __init__(self):
+        super(TfEngine, self).__init__("Tf")
         self.CURRENT_SESSION = None
         self.INITIALIZED = False
     
@@ -384,6 +385,8 @@ class ArbitraryRNNCell(rc.RNNCell):
         return self._state_size
 
     def __call__(self, input_tuple, state_tuple, scope=None):
-        return self.calc_callback(input_tuple, state_tuple)
+        out, state = self.calc_callback(input_tuple, state_tuple)
+        print out, state
+        return out, state
 
 

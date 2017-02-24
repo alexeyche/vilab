@@ -4,6 +4,7 @@ from vilab.api import *
 
 class PrintEngine(Engine):
     def __init__(self):
+        super(PrintEngine, self).__init__("Print")
         self._debug_outputs = []
 
     def is_data_engine(self):
@@ -73,7 +74,9 @@ class PrintEngine(Engine):
         return "{}({})".format(metrics.get_name(), ",".join([str(a) for a in args]))
 
     def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
-        return "", ""
+        out, state = callback(sequence, state)
+        return "Seq({})".format(out), state
+        
 
     def get_density(self, density):
         return "{}({})".format(density.get_name(), ",".join([str(a) for a in density.get_args()]))

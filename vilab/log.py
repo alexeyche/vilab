@@ -99,7 +99,7 @@ def add_coloring_to_emit_ansi(fn):
     #//hdlr = logging.StreamHandler()
 
 
-def setup_log(log_level = logging.INFO, color=True, ident_level=0):
+def setup_log(log_level = logging.INFO, color=False, ident_level=0):
     root = logging.getLogger()
     root.setLevel(log_level)
 

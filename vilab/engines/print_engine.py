@@ -77,8 +77,8 @@ class PrintEngine(Engine):
         out, state = callback(sequence, state)
         return "Seq({})".format(out), state
         
-
     def get_density(self, density):
         return "{}({})".format(density.get_name(), ",".join([str(a) for a in density.get_args()]))
 
-
+    def sequence_operation(self, op, seq):
+        return "{}({})".format(op, seq)

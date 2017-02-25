@@ -15,7 +15,7 @@ x, y, h = Sequence("x"), Sequence("y"), Sequence("h")
 t = Index("t")
 
 Function.configure(
-	weight_factor = 0.1,
+	weight_factor = 0.1
 )
 
 f = Function("f")

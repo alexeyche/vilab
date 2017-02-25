@@ -8,7 +8,7 @@ from vilab.deduce import deduce, maximize, Monitor
 from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 
-setup_log(logging.DEBUG)
+setup_log(logging.INFO)
 
 
 # configuration

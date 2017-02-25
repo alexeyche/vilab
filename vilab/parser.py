@@ -137,6 +137,8 @@ class Parser(object):
         self.engine_inputs = {}
         
         self.shape_info = []
+        
+        self.seq_ctx = None
 
         self.sample_configuration_stack = []
 
@@ -277,13 +279,24 @@ class Parser(object):
         elif ctx.density_view == DensityView.PROBABILITY:
             assert self.data_info.has(ctx.output), "Expecting {} in feed dictionary to calculate probability using PDF {}".format(ctx.output, elem)
             assert not isinstance(dst_elem, DiracDelta), "Can't calculate likelihood value for DiracDelta distribution"
+            
+            assert not isinstance(ctx.output, PartOfSequence) or (
+                not ctx.sequence_variables is None or isinstance(self.engine, VarEngine)
+            ), "Got part of sequence without sequence_variables"
+            
+            if isinstance(ctx.output, PartOfSequence) and not ctx.sequence_variables is None:
+                logging.debug("Got likelihood of part of sequence {}, will try to find data from input to RNN".format(ctx.output))
+                assert ctx.output in ctx.sequence_variables, "Couldn't find sequence data in sequence info for {}".format(ctx.output)
+                provided_input = ctx.sequence_variables[ctx.output]
 
-            provided_input = self.engine.provide_input(elem.get_name(), (self.batch_size, ) + self.data_info.get_shape(ctx.output))
+            else: 
+                logging.debug("Providing inputs for deducing likelihood {} by means of {} from feed_dict".format(elem.get_name(), ctx.output))
+                provided_input = self.engine.provide_input(elem.get_name(), (self.batch_size, ) + self.data_info.get_shape(ctx.output))
 
-            assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
-            self.engine_inputs[provided_input] = ctx.output
+                assert not provided_input in self.engine_inputs, "Visiting input for {} again".format(elem.get_name())
+                self.engine_inputs[provided_input] = ctx.output
 
-            logging.info("Deducing likelihood for {} provided from inputs".format(ctx.output))
+            logging.info("Deducing likelihood for {} provided from {}".format(ctx.output, provided_input))
 
             return self.engine.likelihood(dst_elem, provided_input)
         elif ctx.density_view == DensityView.DENSITY:
@@ -524,7 +537,7 @@ class Parser(object):
     def sequence_operation(self, elem, ctx):
         logging.debug("Got sequence operation: {}".format(elem))
         seq = self.deduce_sequence(elem.get_expr(), ctx)
-        return seq
+        return self.engine.sequence_operation(elem, seq)
 
     def deduce_sequence_ctx(self, elements):
         seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], [], set(), set(), False)
@@ -548,14 +561,14 @@ class Parser(object):
                 assert isinstance(idx, Index)
                 
                 if idx.get_offset() == 0: # input data
-                    assert var.get_seq() in feed_dict, "Expecting sequence data for {}".format(v.get_seq())
+                    assert var.get_seq() in feed_dict, "Expecting sequence data for {}".format(var)
                     assert len(feed_dict[var.get_seq()].shape) == 3, "Input data for sequence must have alignment time x batch x dimension"
                     
                     input_shape = feed_dict[var.get_seq()].shape
                     if not var.get_seq() in seq_ctx.input_var_cache:
                         seq_ctx.input_var.append(var)
                         seq_ctx.input_var_cache.add(var.get_seq())
-                    
+                        
                         provided_input = self.engine.provide_input(
                             var.get_seq().get_name(), (input_shape[0], self.batch_size, input_shape[2])
                         )
@@ -605,8 +618,8 @@ class Parser(object):
             for ov in var_seq_ctx.output_var:
                 logging.debug("Found {} as output var, adding to RNN output".format(ov))
                 seq_ctx.output_var.append(ov)
-
-        assert len(seq_ctx.state_var) > 0, "Deducer failed to find any sequence related elements to calculate"
+        
+        assert len(seq_ctx.output_var) == 0 or len(seq_ctx.state_var) > 0, "Deducer failed to find any sequence related elements to calculate"
         
         for v, size in zip(seq_ctx.state_var, seq_ctx.state_size):
             seq = v.get_seq()
@@ -680,6 +693,12 @@ class Parser(object):
                         )
                     )
                 )
+            
+            logging.debug("Got output and state from RNN callback:\n\tout: {}\n\tstate: {}".format(
+                ", ".join([str(o) for o in output_data]),
+                ", ".join([str(o) for o in output_state])
+            ))
+
             return tuple(output_data), tuple(output_state)
         
         out_gen, finstate_gen = self.engine.iterate_over_sequence(
@@ -704,13 +723,15 @@ class Parser(object):
     def do(self, elements):
         for elem in elements:
             assert not isinstance(elem, PartOfSequence), "Can't deduce part of sequence {}, need actual sequence for deducing".format(elem)
-        seq_ctx = self.deduce_sequence_ctx(elements)
+
+        if self.seq_ctx is None: 
+            self.seq_ctx = self.deduce_sequence_ctx(elements)
         outputs = []
         for elem in elements:
             outputs.append(
                 self.deduce(elem, Parser.get_ctx_with(
                     self.default_ctx,
-                    sequence_ctx = seq_ctx
+                    sequence_ctx = self.seq_ctx
                 ))
             )
 

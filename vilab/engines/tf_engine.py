@@ -360,6 +360,7 @@ class TfEngine(Engine):
     
     def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
         cell = ArbitraryRNNCell(callback, output_size, state_size)
+
         out_gen, finstate_gen = rnn.dynamic_rnn(
             cell, 
             sequence, 
@@ -368,6 +369,14 @@ class TfEngine(Engine):
         )
         return out_gen, finstate_gen
 
+    def sequence_operation(self, op, seq):
+        assert len(seq.get_shape()) == 3
+        if isinstance(op, Summation):
+            return tf.reduce_sum(seq, 0)
+        elif isinstance(op, Iterate):
+            return seq
+        else:
+            raise Exception("Sequence operation {} is not implemented".format(op))
 
 
 class ArbitraryRNNCell(rc.RNNCell):

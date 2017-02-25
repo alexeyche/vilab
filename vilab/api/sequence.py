@@ -124,3 +124,7 @@ class Summation(SequenceOperation):
     def __init__(self, expr):
         super(Summation, self).__init__("Summation", expr)
 
+class Iterate(SequenceOperation):
+    def __init__(self, expr):
+        super(Iterate, self).__init__("Iterate", expr)
+

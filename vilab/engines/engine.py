@@ -55,3 +55,6 @@ class Engine(object):
 
     def iterate_over_sequence(self, sequence, state, callback, output_size, state_size):
         raise NotImplementedError
+
+    def sequence_operation(self, op, seq):
+        raise NotImplementedError        

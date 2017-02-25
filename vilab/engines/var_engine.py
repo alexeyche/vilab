@@ -39,7 +39,11 @@ class VarEngine(Engine):
         return VarTensor(shape, density.get_args())
 
     def likelihood(self, density, data):
-        return VarTensor(data.get_shape(), density.get_args())
+        batch_sizes = set([get_shape(a)[0] for a in density.get_args() if len(get_shape(a)) > 0])
+        assert len(batch_sizes) == 1
+        batch_size = batch_sizes.pop()
+        
+        return VarTensor((batch_size, 1), density.get_args())
 
     def run(self, *args, **kwargs):
         return args[0]
@@ -86,5 +90,15 @@ class VarEngine(Engine):
 
     def get_density(self, density):
         return VarTensor(get_shape(density.get_args()[0]), density.get_args())
-
+    
+    def sequence_operation(self, op, seq):
+        s = get_shape(seq)
+        if isinstance(op, Summation):
+            if len(s) == 3:
+                return VarTensor(s[1:], seq)
+            return VarTensor(s, seq)
+        elif isinstance(op, Iterate):
+            return VarTensor(s, seq)
+        else:
+            raise Exception("Sequence operation {} is not implemented".format(op))
 

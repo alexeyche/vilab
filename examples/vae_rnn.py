@@ -15,6 +15,11 @@ setup_log(logging.DEBUG)
 h_seq, x_seq, z_seq = Sequence("h"), Sequence("x"), Sequence("z")
 t = Index("t")
 
+Function.configure(
+	weight_factor = 0.1
+)
+
+
 h_new, h, x, z = h_seq[t], h_seq[t-1], x_seq[t], z_seq[t]    # previous state, current data, current latent data (will be generated)
 
 # Definition of high level functions
@@ -41,18 +46,16 @@ LL_t = - KL(q(z | h, x), p(z)) + log(p(x | h, z))
 LL = Summation(LL_t)
 
  
-x_train = np.random.randn(20, 10)
-ndim = x_train.shape[1]
+x_train = np.random.randn(100, 20, 10)
 
-h_o = deduce(
+h_o, ctx = deduce(
 	LL,
 	feed_dict={
-		x: x_train,
-		h: np.zeros((20, 2))
+		x_seq: x_train,
+		h_seq[0]: np.zeros((20, 5))
 	},
 	structure={
 		mlp: (200, 200,),
-		z: 2,
-		h_new: 3
+		z: 2
 	}
 )

@@ -80,6 +80,7 @@ class Parser(object):
         "state_var", 
         "input_var", 
         "output_var",
+        "output_var_result",
         "input_data", 
         "state_start_data", 
         "state_size",
@@ -507,7 +508,11 @@ class Parser(object):
 
 
     def sequence(self, elem, ctx):
-        parts = [p for idx, p in elem.get_parts().iteritems() if idx.get_offset() == 0]
+        parts = [
+            p 
+            for idx, p in elem.get_parts().iteritems() 
+            if isinstance(idx, Index) and idx.get_offset() == 0
+        ]
         assert len(parts) > 0, "Need to use sequence {} in model definition".format(elem)
         assert len(parts) == 1, "Got too many usage of sequence {} with zero offset indexing: {}".format(
             elem, 
@@ -522,7 +527,7 @@ class Parser(object):
         return seq
 
     def deduce_sequence_ctx(self, elements):
-        seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], set(), set(), False)
+        seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], [], set(), set(), False)
         
         def has_var_data(var, feed_dict):
             if not var in feed_dict:
@@ -588,8 +593,8 @@ class Parser(object):
         var_parser = Parser(VarEngine(), elements[0], data_info_cb, self.structure, self.batch_size)
         
         for elem in elements:
-            var_seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], set(), set(), True)
-            
+            var_seq_ctx = Parser.SequenceCtx([], [], [], [], [], [], [], [], [], set(), set(), True)
+
             seq_ctx.output_elem.append(var_parser.deduce(
                 elem, 
                 ctx = Parser.get_ctx_with(
@@ -601,6 +606,8 @@ class Parser(object):
                 logging.debug("Found {} as output var, adding to RNN output".format(ov))
                 seq_ctx.output_var.append(ov)
 
+        assert len(seq_ctx.state_var) > 0, "Deducer failed to find any sequence related elements to calculate"
+        
         for v, size in zip(seq_ctx.state_var, seq_ctx.state_size):
             seq = v.get_seq()
             seq_parts = seq.get_parts()
@@ -619,6 +626,12 @@ class Parser(object):
 
     def deduce_sequence(self, elem, ctx):
         assert not ctx.sequence_ctx is None, "Need provide sequence context to deduce sequences"
+
+        if len(ctx.sequence_ctx.output_var_result) > 0 and not ctx.sequence_ctx.request_for_output:
+            assert elem in ctx.sequence_ctx.output_var, "Can't find element {} in the results of sequence model".format(elem)
+            out_idx = ctx.sequence_ctx.output_var.index(elem)    
+            return ctx.sequence_ctx.output_var_result[out_idx]
+
         if ctx.sequence_ctx.request_for_output:
             ctx.sequence_ctx.output_var.append(elem)
 
@@ -626,11 +639,13 @@ class Parser(object):
             ", ".join([str(v) for v in ctx.sequence_ctx.input_var]),
             ", ".join([str(v) for v in ctx.sequence_ctx.state_var]),
         ))
-        
-        logging.debug("And with output state variables: {}".format(
-            ", ".join([str(v) for v in ctx.sequence_ctx.output_state_var]),
+        logging.debug("With output variables: {}".format(
+            ", ".join([str(v) for v in ctx.sequence_ctx.output_var]),
         )) 
-        
+        logging.debug("With output state variables: {}".format(
+            ", ".join([str(v) for v in ctx.sequence_ctx.output_state_var]),
+        ))
+
         def get_value(input_tuple, state_tuple):
             sequence_variables = {}
                 
@@ -652,7 +667,7 @@ class Parser(object):
                         sequence_variables=sequence_variables,
                     )
                 ))
-            print output_data
+            
             output_state = []
             for state_var_id, state_var in enumerate(ctx.sequence_ctx.output_state_var):
                 logging.debug("RNN: Deducing #{} variable {} for rnn output".format(state_var_id, state_var))
@@ -665,9 +680,8 @@ class Parser(object):
                         )
                     )
                 )
-
             return tuple(output_data), tuple(output_state)
-
+        
         out_gen, finstate_gen = self.engine.iterate_over_sequence(
             tuple(ctx.sequence_ctx.input_data), 
             tuple(ctx.sequence_ctx.state_start_data), 
@@ -675,13 +689,21 @@ class Parser(object):
             tuple([ elem_out.get_shape()[1] for elem_out in ctx.sequence_ctx.output_elem ]), 
             tuple(ctx.sequence_ctx.state_size)
         )
+
+        assert len(ctx.sequence_ctx.output_var_result) == 0 or ctx.sequence_ctx.request_for_output, \
+            "Generating sequence several times"
         
+        for o in out_gen:
+            ctx.sequence_ctx.output_var_result.append(o)
+
         out_idx = ctx.sequence_ctx.output_var.index(elem) if not ctx.sequence_ctx.request_for_output else 0
-        return out_gen[out_idx]
+        return ctx.sequence_ctx.output_var_result[out_idx]
 
     
 
     def do(self, elements):
+        for elem in elements:
+            assert not isinstance(elem, PartOfSequence), "Can't deduce part of sequence {}, need actual sequence for deducing".format(elem)
         seq_ctx = self.deduce_sequence_ctx(elements)
         outputs = []
         for elem in elements:

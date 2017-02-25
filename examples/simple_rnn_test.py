@@ -30,35 +30,24 @@ cost = - Summation(SquaredLoss(y[t], x[t]))
 x_train = 0.1*np.random.randn(100, 10, 5)
 
 
-out, ctx = deduce(
-	[cost, y],
+
+def monitor_callback(ep, *args):
+	logging.info("\tloss: {}".format(np.mean(np.square(args[0] - x_train))))
+
+out, _, ctx = maximize(
+	cost, 
+	epochs=75,
+	learning_rate=0.1,
 	feed_dict={
 		x: x_train,
 		h[0]: np.zeros((10, 3))
 	},
 	structure={
 		y: 5
-	}
+	},
+	monitor=Monitor(
+		[y, h],
+		freq=5,
+		callback=monitor_callback
+	)
 )
-
-
-# def monitor_callback(ep, *args):
-# 	logging.info(np.mean(np.square(args[0] - x_train)))
-
-# out, _, ctx = maximize(
-# 	cost, 
-# 	epochs=75,
-# 	learning_rate=0.1,
-# 	feed_dict={
-# 		x: x_train,
-# 		h[0]: np.zeros((10, 3))
-# 	},
-# 	structure={
-# 		y: 5
-# 	},
-# 	monitor=Monitor(
-# 		[y[t]],
-# 		freq=5,
-# 		callback=monitor_callback
-# 	)
-# )

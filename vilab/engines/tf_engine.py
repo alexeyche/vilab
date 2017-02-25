@@ -386,7 +386,6 @@ class ArbitraryRNNCell(rc.RNNCell):
 
     def __call__(self, input_tuple, state_tuple, scope=None):
         out, state = self.calc_callback(input_tuple, state_tuple)
-        print out, state
         return out, state
 
 

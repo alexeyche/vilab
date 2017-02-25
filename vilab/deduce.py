@@ -40,12 +40,12 @@ def deduce_shapes(feed_dict, structure):
                  structure[k] = v.shape[-1]
     
     for k, v in structure.copy().iteritems():
+        if isinstance(k, PartOfSequence):
+            k = k.get_seq()
         if isinstance(k, Sequence):
             for _, part in k.get_parts().iteritems():
                 if not part in structure:
                     structure[part] = v
-            
-
 
 def get_data_slice(element_id, batch_size, feed_dict):
     data_slice = {}
@@ -181,9 +181,9 @@ def maximize(
 ):
     assert not isinstance(engine, PrintEngine), "Can't maximize with PrintEngine"
 
-    str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
-    logging.info("== MAXIMIZE ===============================")
-    logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
+    # str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
+    # logging.info("== MAXIMIZE ===============================")
+    # logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
     
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
@@ -194,14 +194,18 @@ def maximize(
         batch_size = data_size
     
     parser = Parser(engine, elem, Parser.DataInfo(feed_dict), structure, batch_size)
-    to_optimize = parser.deduce(elem)
-        
-    opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)
+    
+    parser_result = parser.do([elem] + monitor.elems)
+    
+    to_optimize = parser_result[0]
 
     to_monitor = OrderedDict()
-    for m in monitor.elems:
+    for m, val in zip(monitor.elems, parser_result[1:]):
         name = m.get_name() if hasattr(m, "get_name") else str(m)
-        to_monitor[name] = parser.deduce(m, Parser.get_ctx_with(parser.get_ctx(), output=m))
+        to_monitor[name] = val
+
+        
+    opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)
 
     monitoring_values = []
 

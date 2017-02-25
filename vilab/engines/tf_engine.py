@@ -164,7 +164,8 @@ class TfEngine(Engine):
         tvars = tf.trainable_variables()
         grads_raw = tf.gradients(-tf.reduce_mean(value), tvars)
 
-        grads, _ = tf.clip_by_global_norm(grads_raw, 5.0)
+        # grads, _ = tf.clip_by_global_norm(grads_raw, 5.0)
+        grads = grads_raw
         apply_grads = optimizer_tf.apply_gradients(zip(grads, tvars))
 
         return apply_grads

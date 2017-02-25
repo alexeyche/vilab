@@ -4,6 +4,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import math
 import collections
+import pylab
 
 def shm(*matrices, **kwargs):
     for m_id, matrix in enumerate(matrices):
@@ -56,7 +57,7 @@ def shs(*args, **kwargs):
             a = pca.fit(a).transform(a)
         
         if len(labels) > 0:
-            plt.scatter(a[:,0], a[:,1], c=labels)
+            plt.scatter(a[:,0], a[:,1], c=labels, cmap=pylab.cm.gist_rainbow)
         else:
             plt.scatter(a[:,0], a[:,1])
     

@@ -39,6 +39,7 @@ class VarEngine(Engine):
         return VarTensor(shape, density.get_args())
 
     def likelihood(self, density, data):
+        # return VarTensor(density.get_args()[0].get_shape(), density.get_args())
         batch_sizes = set([get_shape(a)[0] for a in density.get_args() if len(get_shape(a)) > 0])
         assert len(batch_sizes) == 1
         batch_size = batch_sizes.pop()

@@ -108,6 +108,9 @@ class DeduceContext(object):
         return "DeduceContext(\n\tstructure={},\n\tbatch_size={},\n\tfeed_dict keys={}\n)".format(self.structure, self.batch_size, self.feed_dict.keys())
 
 def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
+    for v in Variable.REGISTER.values():
+        v.set_non_descriptive()
+        
     elem_is_sequence = is_sequence(elem)
     str_repr = None
     # if not isinstance(engine, PrintEngine) and context is None:
@@ -180,10 +183,12 @@ def maximize(
     engine=TfEngine()
 ):
     assert not isinstance(engine, PrintEngine), "Can't maximize with PrintEngine"
+    for v in Variable.REGISTER.values():
+        v.set_non_descriptive()
 
-    # str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
-    # logging.info("== MAXIMIZE ===============================")
-    # logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
+    str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
+    logging.info("== MAXIMIZE ===============================")
+    logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
     
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
@@ -204,7 +209,6 @@ def maximize(
         name = m.get_name() if hasattr(m, "get_name") else str(m)
         to_monitor[name] = val
 
-        
     opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)
 
     monitoring_values = []

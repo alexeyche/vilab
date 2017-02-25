@@ -3,16 +3,24 @@ import logging
 
 
 class Variable(object):
-    REGISTER = set()
+    REGISTER = {}
 
     def __init__(self, name):
         assert not name in Variable.REGISTER, "Variable with name {} already defined".format(name)
-        Variable.REGISTER.add(name)
+        Variable.REGISTER[name] = self
         self._name = name
         self._requested_dependencies = []
         
         self._models = tuple()     # Just for convinience of deduction of deduce(x), 
                                    # but it will fail if variable is described by several densities (condition on something)
+        self._descriptive = True
+
+
+    def is_descriptive(self):
+        return self._descriptive
+
+    def set_non_descriptive(self):
+        self._descriptive = False
 
     def set_model(self, model):
         self._models += (model,)
@@ -43,7 +51,7 @@ class Variable(object):
 
         if isinstance(x, Variable):
             return self.get_name() == x.get_name()
-        elif isinstance(x, Density) or isinstance(x, FunctionResult):
+        elif self._descriptive and (isinstance(x, Density) or isinstance(x, FunctionResult)):
             p_tmp = Model(self.get_name())
             return p_tmp(self | None) == x  # unknown dependencies
         else:

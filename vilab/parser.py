@@ -193,7 +193,7 @@ class Parser(object):
         if not visited_value is None:
             return visited_value
         
-        logging.debug("level: {}, elem: {}, ctx: {}".format(self.level, elem, ctx))
+        logging.debug("level: {}, elem: {}".format(self.level, elem))
         if logging.getLogger().level == logging.DEBUG:
             setup_log(logging.DEBUG, ident_level=self.level)        
         
@@ -603,6 +603,9 @@ class Parser(object):
                 return feed_dict[var].shape[1:]
 
         data_info_cb = Parser.DataInfoCb(self.data_info.get_feed_dict(), has_var_data, get_var_shape)
+        
+        log_level = logging.getLogger().level
+        setup_log(logging.CRITICAL)
         var_parser = Parser(VarEngine(), elements[0], data_info_cb, self.structure, self.batch_size)
         
         for elem in elements:
@@ -635,6 +638,7 @@ class Parser(object):
             seq_ctx.output_state_var.append(output_state)
             self.structure[output_state] = size
 
+        setup_log(log_level)
         return seq_ctx
 
     def deduce_sequence(self, elem, ctx):
@@ -642,7 +646,9 @@ class Parser(object):
 
         if len(ctx.sequence_ctx.output_var_result) > 0 and not ctx.sequence_ctx.request_for_output:
             assert elem in ctx.sequence_ctx.output_var, "Can't find element {} in the results of sequence model".format(elem)
-            out_idx = ctx.sequence_ctx.output_var.index(elem)    
+            out_idx = ctx.sequence_ctx.output_var.index(elem)
+            
+            logging.debug("Got cached RNN output with id {} for element {}".format(out_idx, elem))
             return ctx.sequence_ctx.output_var_result[out_idx]
 
         if ctx.sequence_ctx.request_for_output:
@@ -698,7 +704,6 @@ class Parser(object):
                 ", ".join([str(o) for o in output_data]),
                 ", ".join([str(o) for o in output_state])
             ))
-
             return tuple(output_data), tuple(output_state)
         
         out_gen, finstate_gen = self.engine.iterate_over_sequence(
@@ -715,6 +720,10 @@ class Parser(object):
         for o in out_gen:
             ctx.sequence_ctx.output_var_result.append(o)
 
+        logging.debug("Constructed rnn with output data: \n{}".format("\n".join([
+            "\t{}".format(o) for o in ctx.sequence_ctx.output_var_result
+        ])))
+            
         out_idx = ctx.sequence_ctx.output_var.index(elem) if not ctx.sequence_ctx.request_for_output else 0
         return ctx.sequence_ctx.output_var_result[out_idx]
 
@@ -726,6 +735,11 @@ class Parser(object):
 
         if self.seq_ctx is None: 
             self.seq_ctx = self.deduce_sequence_ctx(elements)
+            deb_str = ""
+            for k, v in self.seq_ctx._asdict().iteritems():
+                deb_str += "\t{} -> {}\n".format(k, v)
+            logging.debug("Sequence ctx:\n{}".format(deb_str))
+            
         outputs = []
         for elem in elements:
             outputs.append(

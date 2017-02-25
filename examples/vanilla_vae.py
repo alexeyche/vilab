@@ -54,7 +54,7 @@ env = Env("mnist", clear_pics=True)
 
 def monitor_callback(ep, *args):
 	shm(get_pic(args[0][0,:]), file=env.run("x_output_{}.png".format(ep)))
-	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=t_test)
+	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=[str(l) for l in t_test])
 
 out, mon_out, ctx = maximize(
 	LL, 

@@ -42,12 +42,12 @@ class Probability(object):
     def __eq__(self, x):
         from vilab.api.function import FunctionResult
 
-        if isinstance(x, Density):
+        if isinstance(x, Density) and self._output.is_descriptive():
             logging.info("Describing variable {} with density {} in the context of {}".format(self._output, x, self._model))
             self._output.set_model(self._model)
             self._model.save_description(self._output, self._dependencies, x)
             return True
-        elif isinstance(x, FunctionResult):
+        elif isinstance(x, FunctionResult) and self._output.is_descriptive():
             logging.info("Describing variable {} with function {} in the context of {}".format(self._output, x, self._model))
             self._output.set_model(self._model)
             self._model.save_description(self._output, self._dependencies, DiracDelta(x))
@@ -58,7 +58,7 @@ class Probability(object):
                 self._dependencies == x._dependencies and \
                 self._model == x._model
         else:
-            raise Exception("Comparing with the strange type: {}".format(x))
+            return False
 
     def get_components(self):
         return self._model, self._output, self._dependencies

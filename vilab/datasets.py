@@ -7,6 +7,7 @@ import numpy as np
 import gzip, zipfile, tarfile
 import pickle as pkl
 import cPickle as cPkl
+from random import shuffle
 
 
 def _get_datafolder_path():
@@ -149,4 +150,26 @@ def load_toy_dataset():
     test_data = np.concatenate([test_data]*25)
     test_data_classes = np.concatenate([test_data_classes]*25)
     return test_data, test_data_classes
+
+def load_toy_seq_dataset(batch_size = 100, seq_size=25, n_class=5):
+    classes, labs = [], []
+    for i in xrange(n_class):
+        x_class = np.zeros((seq_size, 10))
+        x_class[np.where(0.1 > np.random.random((seq_size, 10)))] = 1.0
+        classes += [x_class]*(batch_size/n_class)
+        labs += [str(i)]*(batch_size/n_class)
+
+    ids = range(0, len(classes))
+    shuffle(ids)
+    
+    classes = [classes[id] for id in ids]
+    labs = [labs[id] for id in ids]
+
+    x_train = np.dstack(classes)
+    x_train = np.transpose(x_train, (0,2,1))
+
+    return x_train, labs
+
+
+
 

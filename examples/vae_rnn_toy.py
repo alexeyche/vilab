@@ -43,13 +43,8 @@ h_new == f(x, h)
 LL_t = - KL(q(z | h, x), p(z)) + log(p(x | h, z))
 LL = Summation(LL_t)
 
-
 x_train, x_labs = load_toy_seq_dataset(batch_size=100, seq_size=25, n_class=5)
-
-
-T = x_train.shape[0]
 batch_size = x_train.shape[1]
-
 
 env = Env("vae_rnn", clear_pics=True)
 
@@ -79,5 +74,4 @@ out, _, ctx = maximize(
 m, _ = deduce(Iterate(mu(x, h)), context=ctx)
 
 shs(np.mean(m, 0), labels=x_labs)
-
 shl(*[m[:,bi,:] for bi in xrange(batch_size)])

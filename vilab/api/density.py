@@ -54,7 +54,7 @@ class N(Density):
 
 class B(Density):
     def __init__(self, logits):
-        super(B, self).__init__("Binomial", logits)
+        super(B, self).__init__("Bernoulli", logits)
         self._config = B._CONFIG.copy()
 
 

@@ -3,6 +3,8 @@ import logging
 from function import Arithmetic
 from ..config import Config
 
+from token import Token
+
 def get_name_if_possible(obj):
     if hasattr(obj, "get_name"):
         return obj.get_name()
@@ -14,7 +16,7 @@ def density_configure(importance_samples=1):
     cfg.importance_samples = importance_samples
     return cfg
 
-class Density(object):
+class Density(Token):
     @classmethod
     def configure(cls, **kwargs):
         cls._CONFIG = density_configure(**kwargs)
@@ -23,27 +25,11 @@ class Density(object):
 
 
     def __init__(self, name, *args):
-        self._name = name
-        self._args = list(args)
+        super(Density, self).__init__(name, *args)
         self._config = Density._CONFIG.copy()
 
     def get_config(self):
         return self._config
-
-    def __str__(self):
-        return "{}({})".format(self._name, ",".join([ get_name_if_possible(a) for a in self._args]))
-
-    def __repr__(self):
-        return str(self)
-
-    def get_args(self):
-        return self._args
-
-    def set_args(self, args):
-        self._args = args
-
-    def get_name(self):
-        return self._name
 
 
 class N(Density):
@@ -78,22 +64,9 @@ class DiracDelta(Density):
 
 
 
-class Metrics(Arithmetic):
+class Metrics(Token, Arithmetic):
     def __init__(self, name, *args):
-        self._name = name
-        self._args = list(args)
-
-    def get_name(self):
-        return self._name
-    
-    def __str__(self):
-        return "Metrics({})".format(self.get_name())
-
-    def __repr__(self):
-        return str(self)
-
-    def get_args(self):
-        return self._args
+        super(Metrics, self).__init__(name, *args)
 
 
 class KL(Metrics):

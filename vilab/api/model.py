@@ -5,25 +5,35 @@ from collections import defaultdict
 from vilab.api.variable import Variable
 from vilab.api.density import Density, Unknown, DiracDelta
 
+from token import Token
 
 
-class Probability(object):
+
+class Probability(Token):
     def __init__(self, model, output, dependencies):
+        deps_list = [] if dependencies is None else dependencies
+        super(Probability, self).__init__("{}({}{}{})".format(
+            model.get_name(),
+            output.get_name(), 
+            "" if len(deps_list) == 0 else " | ",
+            ", ".join([d.get_name() for d in deps_list])
+        ))
+        
         self._output = output
         self._dependencies = None if dependencies is None else tuple(sorted(dependencies))
         self._model = model
         self._log_form_flag = False
-
-    def __str__(self):
-        deps = [] if self._dependencies is None else self._dependencies
-        return "{}{}({}{}{}){}".format(
-            ("" if not self._log_form_flag else "log("),
-            self._model.get_name(), 
-            self._output.get_name(), 
-            "" if len(deps) == 0 else " | ",
-            ", ".join([d.get_name() for d in deps]),
-            ("" if not self._log_form_flag else ")")
-        )
+        
+    # def __str__(self):
+    #     deps = [] if self._dependencies is None else self._dependencies
+    #     return "{}{}({}{}{}){}".format(
+    #         ("" if not self._log_form_flag else "log("),
+    #         self._model.get_name(), 
+    #         self._output.get_name(), 
+    #         "" if len(deps) == 0 else " | ",
+    #         ", ".join([d.get_name() for d in deps]),
+    #         ("" if not self._log_form_flag else ")")
+    #     )
 
     def get_context_name(self):
         s = str(self)
@@ -35,9 +45,6 @@ class Probability(object):
             .replace(",", "_") \
             .replace("[", "") \
             .replace("]", "")
-
-    def __repr__(self):
-        return str(self)
 
     def __eq__(self, x):
         from vilab.api.function import FunctionResult
@@ -90,24 +97,24 @@ class Probability(object):
     def __hash__(self):
         return hash((self._model, self._output, self._dependencies))
 
+    def get_statement_id(self):
+        descr = self._model.get_description(self._output, self._dependencies)
+        assert not descr is None, "Trying to get unknown statemet: {}".format(self)
+        return descr[0]
+        
+    def get_args(self):
+        descr = self._model.get_description(self._output, self._dependencies)
+        if descr is None:
+            return []
+        return [descr[1]]
 
 
-
-class Model(object):
+class Model(Token):
     STATEMENTS_NUM = 0
 
     def __init__(self, name):
-        self._name = name
+        super(Model, self).__init__(name)
         self._descriptions = {}
-
-    def __str__(self):
-        return "Model({})".format(self._name)
-
-    def __repr__(self):
-        return str(self)
-
-    def get_name(self):
-        return self._name
 
     def get_description(self, var, deps):
         key = (var, deps)
@@ -115,7 +122,6 @@ class Model(object):
 
     def get_var_probabilities(self, var):
         return tuple([ (v[0], v[1], Probability(self, var, k[1]))  for k, v in self._descriptions.iteritems() if k[0] == var ])
-
 
     def save_description(self, var, deps, density):
         key, val = (var, deps), (Model.STATEMENTS_NUM, density)

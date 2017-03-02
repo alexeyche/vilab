@@ -1,14 +1,16 @@
 
 import logging
 
+from token import Token
 
-class Variable(object):
+class Variable(Token):
     REGISTER = {}
 
     def __init__(self, name):
+        super(Variable, self).__init__(name)
+
         assert not name in Variable.REGISTER, "Variable with name {} already defined".format(name)
         Variable.REGISTER[name] = self
-        self._name = name
         self._requested_dependencies = []
         
         self._models = tuple()     # Just for convinience of deduction of deduce(x), 
@@ -27,19 +29,10 @@ class Variable(object):
 
     def get_models(self):
         return self._models
-        
-    def get_name(self):
-        return self._name
 
     def __or__(self, x):
         self._requested_dependencies = [x]
         return self
-
-    def __str__(self):
-        return "Variable({})".format(self._name)
-
-    def __repr__(self):
-        return str(self)
 
     def __hash__(self):
         return hash(self._name)

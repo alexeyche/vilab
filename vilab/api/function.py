@@ -2,22 +2,14 @@
 import logging
 from ..util import is_sequence
 from ..config import Config
+from token import Token
 
-class BasicFunction(object):
+class BasicFunction(Token):
     def __init__(self, name):
-        self._name = name
+        super(BasicFunction, self).__init__(name)
 
     def __call__(self, *args):
         return FunctionResult(self, *args)
-
-    def __str__(self):
-        return "BasicFunction({})".format(self.get_name())
-
-    def __repr__(self):
-        return str(self)
-
-    def get_name(self):
-        return self._name
 
 
 class Arithmetic(object):
@@ -47,37 +39,25 @@ class Arithmetic(object):
         return FunctionResult(Arithmetic.NEG, self)
 
 
-class FunctionResult(Arithmetic):
+class FunctionResult(Token, Arithmetic):
     def __init__(self, fun, *args):
+        super(FunctionResult, self).__init__(fun.get_name(), *args)
         self._fun = fun
-        self._args = args
-
-    def __str__(self):
-        return "FunctionResult({})".format(self._fun)
-
-    def __repr__(self):
-        return str(self)
 
     def get_fun(self):
         return self._fun
-
-    def get_name(self):
-        return self._fun.get_name()
-
-    def get_args(self):
-        return self._args
 
     def get_act(self):
         return self._fun.get_act()
 
     def __hash__(self):
-        return hash((self._fun, self._args))
+        return hash((self._fun, self.get_args()))
 
     def __eq__(self, x):
         if isinstance(x, FunctionResult):
             return \
                 self._fun == x._fun and \
-                self._args == x._args
+                self.get_args() == x.get_args()
         return False
 
 
@@ -89,7 +69,7 @@ def function_configure(use_batch_norm=False, weight_factor=1.0):
     cfg.weight_factor = weight_factor
     return cfg
 
-class Function(object):
+class Function(Token):
     @classmethod
     def configure(cls, **kwargs):
         cls._CONFIG = function_configure(**kwargs)
@@ -98,23 +78,14 @@ class Function(object):
 
 
     def __init__(self, name, *parents, **kwargs):
+        super(Function, self).__init__(name)
         self._act = kwargs.get("act")
         self._batch_norm = kwargs.get("batch_norm")
-        self._name = name
         self._parent_funs = list(parents)
         self._config = Function._CONFIG.copy()
 
     def get_config(self):
         return self._config
-
-    def __str__(self):
-        return "Function({})".format(self.get_name())
-
-    def __repr__(self):
-        return str(self)
-
-    def get_name(self):
-        return self._name
 
     def get_act(self):
         return self._act
@@ -166,5 +137,3 @@ class LogFunction(BasicFunction):
         return super(LogFunction, self).__call__(x)
 
 log = LogFunction()
-
-

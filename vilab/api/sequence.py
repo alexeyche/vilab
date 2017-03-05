@@ -6,16 +6,17 @@ from token import Token
 
 class Index(Token):
     def __init__(self, name, offset = 0):
-        super(Index, self).__init__(name)
+        super(Index, self).__init__(Index.get_full_name(name, offset))
         self._offset = offset
-
-    def get_full_name(self):
+        
+    @staticmethod
+    def get_full_name(name, offset):
         descr = ""
-        if self._offset > 0:
-            descr = "+{}".format(self._offset)
-        elif self._offset < 0:
-            descr = "-{}".format(abs(self._offset))
-        return "{}{}".format(self._name, descr)
+        if offset > 0:
+            descr = "+{}".format(offset)
+        elif offset < 0:
+            descr = "-{}".format(abs(offset))
+        return "{}{}".format(name, descr)
 
     def get_offset(self):
         return self._offset
@@ -31,7 +32,9 @@ class Index(Token):
         return Index(self.get_name(), self.get_offset() - other)
 
     def __eq__(self, other):
-        return self._name == other._name and self._offset == other._offset
+        if isinstance(other, Index):
+            return self._name == other._name and self._offset == other._offset
+        return False
 
     def __hash__(self):
         return hash((self._name, self._offset))
@@ -53,6 +56,9 @@ class PartOfSequence(Variable):
 
     def get_seq(self):
         return self._seq
+
+    def __hash__(self):
+        return hash((self._seq, self._idx))
 
 
 class Sequence(Token):
@@ -78,7 +84,7 @@ class Sequence(Token):
             if isinstance(key, numbers.Integral):
                 key_name = str(key)
             else:
-                key_name = key.get_full_name()
+                key_name = key.get_name()
 
             self._parts[key] = PartOfSequence(self, key, self._name + "[" + key_name + "]")
         return self._parts[key]

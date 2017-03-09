@@ -47,6 +47,8 @@ g[t] == f(x[t], g[t-1])
 
 LL = - KL(q(z | h[-1]), N0) + Summation(log(p(x[t] | g[t-1])))
 
+
+
 parser = Parser()
 out = parser.deduce(LL)
 

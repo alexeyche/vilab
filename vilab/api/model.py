@@ -82,12 +82,6 @@ class Probability(Token):
     def get_dependencies(self):
         return self._dependencies
 
-    def get_density(self):
-        statement_id, density = self._model.get_description(self._output, self._dependencies)
-        if not density is None:
-            return density
-        raise Exception("Failed to deduce density for {}".format(self))
-
     def get_output(self):
         return self._output
 
@@ -99,14 +93,14 @@ class Probability(Token):
 
     def get_statement_id(self):
         descr = self._model.get_description(self._output, self._dependencies)
-        assert not descr is None, "Trying to get unknown statemet: {}".format(self)
+        assert not descr is None, "Trying to get unknown statement: {}".format(self)
         return descr[0]
         
-    def get_args(self):
+    def get_density(self):
         descr = self._model.get_description(self._output, self._dependencies)
         if descr is None:
-            return []
-        return [descr[1]]
+            return None
+        return descr[1]
 
 
 class Model(Token):

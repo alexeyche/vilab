@@ -1,9 +1,9 @@
 
 import logging
 
-from token import Token
+from token import StructuredToken
 
-class Variable(Token):
+class Variable(StructuredToken):
     REGISTER = {}
 
     def __init__(self, name):
@@ -16,7 +16,6 @@ class Variable(Token):
         self._models = tuple()     # Just for convinience of deduction of deduce(x), 
                                    # but it will fail if variable is described by several densities (condition on something)
         self._descriptive = True
-
 
     def is_descriptive(self):
         return self._descriptive

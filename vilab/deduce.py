@@ -6,7 +6,7 @@ from vilab.parser import Parser
 
 from vilab.api import *
 from vilab.engines.tf_engine import TfEngine
-from vilab.engines.print_engine import PrintEngine
+# from vilab.engines.print_engine import PrintEngine
 from vilab.log import setup_log
 
 
@@ -108,35 +108,14 @@ class DeduceContext(object):
         return "DeduceContext(\n\tstructure={},\n\tbatch_size={},\n\tfeed_dict keys={}\n)".format(self.structure, self.batch_size, self.feed_dict.keys())
 
 def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
-    for v in Variable.REGISTER.values():
-        v.set_non_descriptive()
-        
     elem_is_sequence = is_sequence(elem)
-    str_repr = None
-    # if not isinstance(engine, PrintEngine) and context is None:
-    #     str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse, silent, context, engine=PrintEngine())
-
     log_level = logging.getLogger().level
     if silent:
         setup_log(logging.CRITICAL)        
-    
-    if not str_repr is None:
-        logging.info("== DEDUCE ===============================")
-        logging.info("String representation of deducing element:")
-        logging.info("    {}".format(str_repr))
-    
-    parser = None
-    if not context is None:
-        feed_dict =  context.feed_dict if feed_dict is None else feed_dict
-        structure = context.structure
-        batch_size = context.batch_size
-        parser = context.parser
-        engine = context.engine
-        parser.reuse = True
 
     data_size = get_data_size(feed_dict)
     deduce_shapes(feed_dict, structure)
-    
+
     assert not batch_size is None or data_size is None or data_size < 10000, \
         "Got too big data size, need to point proper batch_size in arguments"
 
@@ -147,21 +126,67 @@ def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, s
     results = []
     if not is_sequence(elem):
         elem = [elem]
+
+    p = Parser(structure)
+    p.parse(elem)
+
+
+
+# def deduce(elem, feed_dict=None, structure=None, batch_size=None, reuse=False, silent=False, context=None, engine=TfEngine()):
+#     for v in Variable.REGISTER.values():
+#         v.set_non_descriptive()
+        
+#     elem_is_sequence = is_sequence(elem)
+#     str_repr = None
+#     # if not isinstance(engine, PrintEngine) and context is None:
+#     #     str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse, silent, context, engine=PrintEngine())
+
+#     log_level = logging.getLogger().level
+#     if silent:
+#         setup_log(logging.CRITICAL)        
     
-    if parser is None:
-        parser = Parser(engine, elem[0], Parser.DataInfo(feed_dict), structure, batch_size, reuse)
-
-    results = parser.do(elem)
+#     if not str_repr is None:
+#         logging.info("== DEDUCE ===============================")
+#         logging.info("String representation of deducing element:")
+#         logging.info("    {}".format(str_repr))
     
-    logging.debug("Collected {}".format(results))
-    outputs = _run(engine, results, feed_dict, batch_size, parser.get_engine_inputs())
+#     parser = None
+#     if not context is None:
+#         feed_dict =  context.feed_dict if feed_dict is None else feed_dict
+#         structure = context.structure
+#         batch_size = context.batch_size
+#         parser = context.parser
+#         engine = context.engine
+#         parser.reuse = True
 
-    if silent:
-        setup_log(log_level)        
+#     data_size = get_data_size(feed_dict)
+#     deduce_shapes(feed_dict, structure)
+    
+#     assert not batch_size is None or data_size is None or data_size < 10000, \
+#         "Got too big data size, need to point proper batch_size in arguments"
 
-    if not elem_is_sequence:
-        return outputs[0], DeduceContext(parser)
-    return outputs, DeduceContext(parser)
+#     if batch_size is None:
+#         assert not data_size is None, "Need to specify batch size"
+#         batch_size = data_size
+
+#     results = []
+#     if not is_sequence(elem):
+#         elem = [elem]
+    
+#     if parser is None:
+#         parser = Parser(engine, elem[0], Parser.DataInfo(feed_dict), structure, batch_size, reuse)
+
+#     results = parser.do(elem)
+    
+#     logging.debug("Collected {}".format(results))
+#     outputs = _run(engine, results, feed_dict, batch_size, parser.get_engine_inputs())
+
+#     if silent:
+#         setup_log(log_level)        
+
+#     if not elem_is_sequence:
+#         return outputs[0], DeduceContext(parser)
+#     return outputs, DeduceContext(parser)
 
 class Monitor(object):
     def __init__(self, elems, freq=1, feed_dict=None, callback=None):
@@ -181,70 +206,73 @@ def maximize(
     batch_size=None, 
     monitor=Monitor([]),
     engine=TfEngine()
-):
-    assert not isinstance(engine, PrintEngine), "Can't maximize with PrintEngine"
-    for v in Variable.REGISTER.values():
-        v.set_non_descriptive()
+):  
+    pass
 
-    str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
-    logging.info("== MAXIMIZE ===============================")
-    logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
+
+#     assert not isinstance(engine, PrintEngine), "Can't maximize with PrintEngine"
+#     for v in Variable.REGISTER.values():
+#         v.set_non_descriptive()
+
+#     str_repr, _ = deduce(elem, feed_dict, structure, batch_size, reuse=False, silent=True, context=None, engine=PrintEngine())
+#     logging.info("== MAXIMIZE ===============================")
+#     logging.info("String representation of deducing element:\n\t\n{}".format(str_repr))
     
-    data_size = get_data_size(feed_dict)
-    deduce_shapes(feed_dict, structure)
+#     data_size = get_data_size(feed_dict)
+#     deduce_shapes(feed_dict, structure)
 
-    assert not batch_size is None or data_size < 10000 , "Got too big data size, need to point proper batch_size in arguments"
+#     assert not batch_size is None or data_size < 10000 , "Got too big data size, need to point proper batch_size in arguments"
 
-    if batch_size is None:
-        batch_size = data_size
+#     if batch_size is None:
+#         batch_size = data_size
     
-    parser = Parser(engine, elem, Parser.DataInfo(feed_dict), structure, batch_size)
+#     parser = Parser(engine, elem, Parser.DataInfo(feed_dict), structure, batch_size)
     
-    parser_result = parser.do([elem] + monitor.elems)
+#     parser_result = parser.do([elem] + monitor.elems)
     
-    to_optimize = parser_result[0]
+#     to_optimize = parser_result[0]
 
-    to_monitor = OrderedDict()
-    for m, val in zip(monitor.elems, parser_result[1:]):
-        name = m.get_name() if hasattr(m, "get_name") else str(m)
-        to_monitor[name] = val
+#     to_monitor = OrderedDict()
+#     for m, val in zip(monitor.elems, parser_result[1:]):
+#         name = m.get_name() if hasattr(m, "get_name") else str(m)
+#         to_monitor[name] = val
 
-    opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)
+#     opt_output = engine.optimization_output(to_optimize, optimizer, learning_rate)
 
-    monitoring_values = []
+#     monitoring_values = []
 
-    engine_inputs = parser.get_engine_inputs()
+#     engine_inputs = parser.get_engine_inputs()
 
-    logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
-    for e in xrange(epochs):
-        returns = _run(engine, [to_optimize, opt_output], feed_dict, batch_size, engine_inputs)
+#     logging.info("Optimizing provided value for {} epochs using {} optimizer".format(epochs, optimizer))
+#     for e in xrange(epochs):
+#         returns = _run(engine, [to_optimize, opt_output], feed_dict, batch_size, engine_inputs)
 
-        if e % monitor.freq == 0:
-            monitor_returns = _run(
-                engine,
-                [to_optimize] + to_monitor.values(), 
-                monitor.feed_dict if not monitor.feed_dict is None else feed_dict,
-                batch_size, 
-                parser.get_engine_inputs()
-            )
+#         if e % monitor.freq == 0:
+#             monitor_returns = _run(
+#                 engine,
+#                 [to_optimize] + to_monitor.values(), 
+#                 monitor.feed_dict if not monitor.feed_dict is None else feed_dict,
+#                 batch_size, 
+#                 parser.get_engine_inputs()
+#             )
 
-            monitor_v = monitor_returns[1:]
+#             monitor_v = monitor_returns[1:]
             
-            mon_str = ""
-            if not monitor.feed_dict is None:
-                mon_str = ", monitor value: {}".format(np.mean(monitor_returns[0]))
+#             mon_str = ""
+#             if not monitor.feed_dict is None:
+#                 mon_str = ", monitor value: {}".format(np.mean(monitor_returns[0]))
 
-            logging.info("Epoch: {}, value: {}{}".format(e, np.mean(returns[0]), mon_str))
-            if not monitor.callback is None:
-                monitor.callback(e, *monitor_v)
-            monitor_v = [np.mean(v) for v in monitor_v]
-            for n, mv in zip(to_monitor.keys(), monitor_v):
-                mon_str = "{}".format(np.mean(mv))
+#             logging.info("Epoch: {}, value: {}{}".format(e, np.mean(returns[0]), mon_str))
+#             if not monitor.callback is None:
+#                 monitor.callback(e, *monitor_v)
+#             monitor_v = [np.mean(v) for v in monitor_v]
+#             for n, mv in zip(to_monitor.keys(), monitor_v):
+#                 mon_str = "{}".format(np.mean(mv))
                     
-                logging.info("    {}: {}".format(n, mon_str))
+#                 logging.info("    {}: {}".format(n, mon_str))
             
-            monitoring_values.append(monitor_v)
+#             monitoring_values.append(monitor_v)
 
-        # _ = gc.collect()
+#         # _ = gc.collect()
 
-    return returns[0], np.asarray(monitoring_values), DeduceContext(parser)
+#     return returns[0], np.asarray(monitoring_values), DeduceContext(parser)

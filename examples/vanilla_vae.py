@@ -4,9 +4,8 @@ import logging
 from vilab.log import setup_log
 from vilab.api import *
 from vilab.util import *
-from vilab.parser import Parser
 
-# from vilab.deduce import deduce, maximize, Monitor
+from vilab.deduce import deduce, maximize, Monitor
 from vilab.datasets import load_mnist_realval
 from vilab.env import Env
 
@@ -44,11 +43,23 @@ p(x | z) == B(logit(z))
 # # Target value
 
 LL = - KL(q(z | x), N0) + log(p(x | z))
-parser = Parser()
-out = parser.deduce(LL)
 
 
-# x_train, t_train, x_valid, t_valid, x_test, t_test = load_mnist_realval()
+# run
+
+x_train, t_train, x_valid, t_valid, x_test, t_test = load_mnist_realval()
+
+LL_o = deduce(
+	LL, 
+	structure={
+		z: 2,	
+	}, feed_dict={
+		x: x_train
+	}, 
+	batch_size=100
+)
+
+
 
 
 # ndim = x_train.shape[1]

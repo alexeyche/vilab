@@ -35,47 +35,57 @@ class Parser(object):
     Ctx = namedtuple("Ctx", [
         "statement_id", 
         "dependencies",
-        "variables_tree"
+        "variables_tree",
+        "requested_shape"
     ])
 
     SeqInfo = namedtuple("SeqCtx", [
         "init",
-        "output",
+        "previous",
         "current",
-        "previous"
+        "output"
     ])
     
-    @staticmethod
-    def get_ctx_with(
-        ctx, 
-        statement_id=None,
-        dependencies=None,
-        variables_tree=None
-    ):
-        return Parser.Ctx(
-            ctx.statement_id if statement_id is None else statement_id,
-            ctx.dependencies if dependencies is None else dependencies,
-            ctx.variables_tree if variables_tree is None else variables_tree
-        )
-
-
-    def __init__(self):
+    def __init__(self, structure={}):
         self._level = 0
         self._callbacks = {
             Variable: self._variable,
             Probability: self._probability,
             PartOfSequence: self._part_of_sequence,
+            FunctionResult: self._function_result,
         }
+        self._structure = structure
 
+    @staticmethod
+    def get_ctx_with(
+        ctx, 
+        statement_id=None,
+        dependencies=None,
+        variables_tree=None,
+        requested_shape=None,
+    ):
+        return Parser.Ctx(
+            ctx.statement_id if statement_id is None else statement_id,
+            ctx.dependencies if dependencies is None else dependencies,
+            ctx.variables_tree if variables_tree is None else variables_tree,
+            ctx.requested_shape if requested_shape is None else requested_shape,
+        )
     
-    def deduce(self, element):
-        ctx = Parser.Ctx(None, None, OrderedDict())
+
+    def parse(self, elements):
+        res = []
         
+        ctx = Parser.Ctx(None, None, OrderedDict(), {})
+        seq_info = Parser.SeqInfo(set(), set(), set(), set())
         leaves = set()
         
-        sequences = []
-        seq_info = Parser.SeqInfo(set(), set(), set(), set())
+        for elem in elements:
+            res.append(
+                self.deduce(elem, ctx, seq_info, leaves)
+            )
         
+
+    def deduce(self, element, ctx, seq_info, leaves):
         def collect_info(element, *args):
             if len(args) == 0:
                 leaves.add(element)
@@ -96,6 +106,17 @@ class Parser(object):
                         seq_info.previous.add(element)
                     else:
                         raise Exception("Unsupported index offset: {}".format(idx))
+            
+            if isinstance(element, Variable) and element in self._structure:
+                assert not element.has_structure() or element.get_structure() == self._structure[element], \
+                    "Got different structures for the same variable {}".format(element)
+                element.set_structure(self._structure[element])
+
+            if isinstance(element, FunctionResult) and element in self._structure:
+                assert not element.has_structure() or element.get_structure() == self._structure[element], \
+                    "Got different structures for the same function {}".format(element)
+                element.set_structure(self._structure[element])
+
             return element
 
         result = self._deduce(element, ctx, collect_info)
@@ -117,27 +138,39 @@ class Parser(object):
         if logging.getLogger().level == logging.DEBUG:
             logging.debug("Resulting variables tree after dedup: \n{}".format(print_tree(ctx.variables_tree)))
 
-        logging.debug(
-            "Sequence releated info:\n\n"
-            "\tinit: {}\n"
-            "\tcurrent: {}\n"
-            "\tprevious: {}\n"
-            "\toutput: {}\n"
-            .format(seq_info.init, seq_info.current, seq_info.previous, seq_info.output)
-        )
-            
+        def log_seq(seq_info):
+            logging.debug(
+                "\n"
+                "\tinit: {}\n"
+                "\tcurrent: {}\n"
+                "\tprevious: {}\n"
+                "\toutput: {}\n"
+                .format(seq_info.init, seq_info.current, seq_info.previous, seq_info.output)
+            )    
 
-        self._deduce_sequences(seq_info, ctx.variables_tree)
-    
+        logging.debug("Sequence related info before preprocess: ")
+        log_seq(seq_info)
+        seq_infos = self._deduce_sequences(seq_info, ctx.variables_tree)
+        
+        logging.debug("Sequence related info after preprocess: ")
+        for si in seq_infos:
+            log_seq(si)
+
+
+
+        from vilab.engines.tf_engine import TfEngine
+        ctx = Parser.Ctx(None, None, OrderedDict(), {})
+        e = TfEngine()
+
+        result = self._deduce(element, ctx, e)
+            
     def _deduplicate_variables_tree(self, variables_tree):
         def find_depth(d, level=0):
-            acc = 0
+            max_level = level
             for k, v in d.iteritems():
                 if isinstance(v, OrderedDict):
-                    acc += find_depth(v, level+1)
-                else:
-                    acc += level
-            return acc
+                    max_level = max(max_level, find_depth(v, level+1))
+            return max_level
 
         def dedup(dest):
             max_key, max_depth = None, None
@@ -147,24 +180,20 @@ class Parser(object):
                     if max_depth is None or d > max_depth:
                         max_depth = d
                         max_key = k
-
+            
             if max_key is None:
                 return 
 
-            print "max_key: {}".format(max_key)
-            
-            def find_dups(d):
+            def find_dups(d, level=0):
                 for k, v in d.iteritems():
-                    if k != max_key and k in dest:
-                        if type(v) == type(dest[k]):
-                            assert dest[k] == v, "Found that variable {} can be deduced by several different pathways".format(k)
-                            logging.debug("Getting rid of duplicate chain for {}".format(k))
-                            del dest[k]
-                        else:
-                            print "{} != {}".format(v, dest[k])
-                    elif isinstance(v, OrderedDict):
-                        find_dups(v)
-            
+                    if k != max_key and k in dest and type(v) == type(dest[k]):
+                        assert dest[k] == v, "Found that variable {} can be deduced by several different pathways".format(k)
+                        logging.debug("Getting rid of duplicate chain for {}".format(k))
+                        del dest[k]
+                    
+                    if isinstance(v, OrderedDict):
+                        find_dups(v, level+1)
+
             find_dups(dest[max_key])
             
             if isinstance(dest[max_key], OrderedDict):
@@ -173,17 +202,52 @@ class Parser(object):
         dedup(variables_tree)
 
     def _deduce_sequences(self, seq_info, variables_tree):
-        def check_inits(d):
+        def collect_sequences(d, seqs):
             for k, v in d.iteritems():
-                if isinstance(k, PartOfSequence):
-                    if  k.get_idx() == 0 and not v is None: # there is dependency on other stuff
-                        pass
-                    elif isinstance(k.get_idx(), Index) and k.get_idx().get_offset() == 0 and v is None: # it's input from data to NN
-                        pass
+                go_deep = isinstance(v, OrderedDict)
 
+                if isinstance(k, PartOfSequence):
+                    seqs.add(k.get_seq())
+                    if k.get_idx() == 0 and not v is None: # there is dependency on other stuff
+                        yield seqs
+                        if go_deep:
+                            new_seqs = set()
+                            for vs in collect_sequences(v, new_seqs):
+                                yield vs
+
+                    elif go_deep:
+                        for vs in collect_sequences(v, seqs):
+                            yield vs
+                    else:
+                        yield seqs
+
+                elif go_deep:
+                    for vs in collect_sequences(v, seqs):
+                        yield vs
+                else:
+                    yield seqs
+        
+        splitted_seqs = []
+        for k in collect_sequences(variables_tree, set()):
+            k = sorted(k)
+            if not k in splitted_seqs:
+                splitted_seqs.append(k)
+            
+        
+        out = []
+        for seqs in splitted_seqs:
+            seq_set = set(seqs)
+            split_seq_info = Parser.SeqInfo(
+                [ s for s in seq_info.init if s.get_seq() in seq_set ],
+                [ s for s in seq_info.previous if s.get_seq() in seq_set ],
+                [ s for s in seq_info.current if s.get_seq() in seq_set ],
+                [ s for s in seq_info.output if s.get_seq() in seq_set ]
+            )
+            out.append(split_seq_info) 
+        return out
 
     def _deduce(self, element, ctx, engine):
-        logging.debug("Deducing element `{}`".format(element))
+        logging.debug("Deducing element `{}`, {}".format(element, ctx))
 
         self._level += 1
 
@@ -220,11 +284,46 @@ class Parser(object):
             args_result.append(self._deduce(elem, ctx, engine))
         return engine(element, *args_result)
 
+    def _function_result(self, element, ctx, engine):
+        if isinstance(element.get_fun(), Function):
+            elem_structure = self._structure.get(element.get_fun(), ctx.requested_shape)    
+            assert not elem_structure is None, "Need to provide structure information for {}".format(element)
+            
+            args_result = []
+            for arg_elem in element.get_args():
+                args_result.append(self._deduce(arg_elem, ctx, engine))
+            
+            return engine(
+                Function.with_structure(element.get_fun(), elem_structure), 
+                *args_result
+            )
+        else:
+            return self._default_callback(element, ctx, engine)
+
+    def _deduce_variable_density(self, variable, density, ctx, engine):
+        elem_structure = self._structure.get(variable)
+        assert not elem_structure is None, "Need to provide structure information for {}".format(element)
+
+        var_dict = OrderedDict()
+        arg_result = self._deduce(
+            density, 
+            Parser.get_ctx_with(
+                ctx,
+                variables_tree=var_dict,
+                requested_shape=elem_structure
+            ), 
+            engine
+        )
+        ctx.variables_tree[variable] = var_dict
+        return engine(variable, arg_result)
+
     def _probability(self, element, ctx, engine):
-        next_element = element.get_args()
-        assert len(next_element) == 1, "Can't find specification of {}".format(element)
-        args_result = self._deduce(
-            next_element[0], 
+        density = element.get_density()
+        assert not density is None, "Can't find specification of {}".format(element)
+
+        return self._deduce_variable_density(
+            element.get_output(), 
+            density,
             Parser.get_ctx_with(
                 ctx, 
                 statement_id=element.get_statement_id(), 
@@ -232,7 +331,6 @@ class Parser(object):
             ), 
             engine
         )
-        return engine(element, args_result)
 
     def _variable(self, element, ctx, engine):
         candidates = []
@@ -277,19 +375,16 @@ class Parser(object):
         
         
         if not next_density is None:
-            var_dict = OrderedDict()
-            arg_result = self._deduce(
-                next_density, 
+            return self._deduce_variable_density(
+                element, 
+                next_density,
                 Parser.get_ctx_with(
-                    ctx,
-                    statement_id=next_statement_id, 
-                    dependencies=next_probability.get_dependencies(),
-                    variables_tree=var_dict
+                    ctx, 
+                    statement_id=next_probability.get_statement_id(), 
+                    dependencies=next_probability.get_dependencies()
                 ), 
                 engine
             )
-            ctx.variables_tree[element] = var_dict
-            return engine(element, arg_result)
         ctx.variables_tree[element] = None
         return engine(element)
         

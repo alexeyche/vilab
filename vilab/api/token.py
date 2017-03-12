@@ -67,18 +67,6 @@ class IntegralType(Token):
     def __eq__(self, other):
         return self._value == other._value
         
-
-class StructuredToken(Token):
-    def __init__(self, name):
-        super(StructuredToken, self).__init__(name)
-        self._structure = None
+    def get_value(self):
+        return self._value
         
-    def get_structure(self):
-        return self._structure
-
-    def set_structure(self, s):
-        self._structure = s
-
-    def has_structure(self):
-        return not self._structure is None
-

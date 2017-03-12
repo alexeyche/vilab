@@ -2,7 +2,7 @@
 import logging
 from ..util import is_sequence
 from ..config import Config
-from token import Token, StructuredToken
+from token import Token
 
 class BasicFunction(Token):
     def __init__(self, name):
@@ -67,19 +67,13 @@ def function_configure(use_batch_norm=False, weight_factor=1.0):
     cfg.weight_factor = weight_factor
     return cfg
 
-class Function(StructuredToken):
+class Function(Token):
     @classmethod
     def configure(cls, **kwargs):
         cls._CONFIG = function_configure(**kwargs)
 
     _CONFIG = function_configure()
 
-
-    @classmethod
-    def with_structure(cls, other, structure):
-        fun = Function(other.get_name(), *other._parent_funs, **{"act": other._act})
-        fun.set_structure(structure)
-        return fun
 
     def __init__(self, name, *parents, **kwargs):
         super(Function, self).__init__(name)

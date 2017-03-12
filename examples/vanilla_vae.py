@@ -40,65 +40,52 @@ logit = Function("logit", mlp)
 q(z | x) == N(mu(x), var(x))
 p(x | z) == B(logit(z))
 
-# # Target value
+# Target value
 
 LL = - KL(q(z | x), N0) + log(p(x | z))
 
-
-# run
+# Run
 
 x_train, t_train, x_valid, t_valid, x_test, t_test = load_mnist_realval()
 
-LL_o = deduce(
+
+ndim = x_train.shape[1]
+get_pic = lambda arr: arr.reshape(np.sqrt(ndim), np.sqrt(ndim)).T
+
+env = Env("vanilla_vae", clear_pics=True)
+
+def monitor_callback(ep, *args):
+	shm(get_pic(args[0][0,:]), file=env.run("x_output_{}.png".format(ep)))
+	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=[str(l) for l in t_test])
+
+out, mon_out, ctx = maximize(
 	LL, 
+	epochs=75,
+	learning_rate=0.001,
+	feed_dict={x: x_train},
 	structure={
-		z: 2,	
-	}, feed_dict={
-		x: x_train
-	}, 
-	batch_size=100
+		mlp: (200, 200,),
+		logit: ndim,
+		z: 2
+	},
+	batch_size=100,
+	monitor=Monitor(
+		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
+		freq=5,
+		feed_dict={x: x_test},
+		callback=monitor_callback
+	)
+)
+
+shl(
+	mon_out[:,2],
+	mon_out[:,3]*0.01,
+	mon_out[:,4],
+	np.exp(0.5*mon_out[:,5]),
+	labels = ["KL", "log_p_x", "mu", "var"]
 )
 
 
+m, _ = deduce(mu(x), feed_dict={x: x_test[:5000]}, context=ctx)
 
-
-# ndim = x_train.shape[1]
-# get_pic = lambda arr: arr.reshape(np.sqrt(ndim), np.sqrt(ndim)).T
-
-# env = Env("mnist", clear_pics=True)
-
-# def monitor_callback(ep, *args):
-# 	shm(get_pic(args[0][0,:]), file=env.run("x_output_{}.png".format(ep)))
-# 	shs(args[1], file=env.run("z_{}.png".format(ep)), labels=[str(l) for l in t_test])
-
-# out, mon_out, ctx = maximize(
-# 	LL, 
-# 	epochs=75,
-# 	learning_rate=0.001,
-# 	feed_dict={x: x_train},
-# 	structure={
-# 		mlp: (200, 200,),
-# 		logit: ndim,
-# 		z: 2
-# 	},
-# 	batch_size=100,
-# 	monitor=Monitor(
-# 		[x, z, KL(q(z | x), N0), log(p(x | z)), mu(x), var(x)],
-# 		freq=5,
-# 		feed_dict={x: x_test},
-# 		callback=monitor_callback
-# 	)
-# )
-
-# shl(
-# 	mon_out[:,2],
-# 	mon_out[:,3]*0.01,
-# 	mon_out[:,4],
-# 	np.exp(0.5*mon_out[:,5]),
-# 	labels = ["KL", "log_p_x", "mu", "var"]
-# )
-
-
-# m, _ = deduce(mu(x), feed_dict={x: x_test[:5000]}, context=ctx)
-
-# shs(m, labels=t_test[:5000], file=env.run("embedding.png"))
+shs(m, labels=t_test[:5000], file=env.run("embedding.png"))

@@ -17,6 +17,12 @@ def density_configure(importance_samples=1):
     return cfg
 
 class Density(Token):
+    class View(object):
+        SAMPLE = "sample"
+        PROBABILITY = "probability"
+        DENSITY = "density"
+
+
     @classmethod
     def configure(cls, **kwargs):
         cls._CONFIG = density_configure(**kwargs)

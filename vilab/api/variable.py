@@ -1,9 +1,9 @@
 
 import logging
 
-from token import StructuredToken
+from token import Token
 
-class Variable(StructuredToken):
+class Variable(Token):
     REGISTER = {}
 
     def __init__(self, name):

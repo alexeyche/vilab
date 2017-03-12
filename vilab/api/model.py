@@ -24,20 +24,20 @@ class Probability(Token):
         self._model = model
         self._log_form_flag = False
         
-    # def __str__(self):
-    #     deps = [] if self._dependencies is None else self._dependencies
-    #     return "{}{}({}{}{}){}".format(
-    #         ("" if not self._log_form_flag else "log("),
-    #         self._model.get_name(), 
-    #         self._output.get_name(), 
-    #         "" if len(deps) == 0 else " | ",
-    #         ", ".join([d.get_name() for d in deps]),
-    #         ("" if not self._log_form_flag else ")")
-    #     )
+    def __str__(self):
+        deps = [] if self._dependencies is None else self._dependencies
+        return "{}({}{}{})".format(
+            # ("" if not self._log_form_flag else "log("),
+            self._model.get_name(), 
+            self._output.get_name(), 
+            "" if len(deps) == 0 else " | ",
+            ", ".join([d.get_name() for d in deps]),
+            # ("" if not self._log_form_flag else ")")
+        )
 
-    def get_context_name(self):
+    def get_scope_name(self):
         s = str(self)
-        return s \
+        res = s \
             .replace("(", "/") \
             .replace(")", "/") \
             .replace("|", "_") \
@@ -46,6 +46,12 @@ class Probability(Token):
             .replace("[", "") \
             .replace("]", "")
 
+        if res[-1] == "/":
+            res = res[:-1]
+        if res[0] == "/":
+            res = res[1:]
+        return res
+        
     def __eq__(self, x):
         from vilab.api.function import FunctionResult
 

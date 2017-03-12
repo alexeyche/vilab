@@ -20,8 +20,6 @@ class DensityView(object):
     DENSITY = "density"
 
 
-
-
 class Parser(object):
     class DataInfo(object):
         def __init__(self, feed_dict):
